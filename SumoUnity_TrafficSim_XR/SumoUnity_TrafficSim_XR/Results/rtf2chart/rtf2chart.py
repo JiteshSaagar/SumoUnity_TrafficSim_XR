@@ -1,8 +1,14 @@
+import os
+
 import matplotlib.pyplot as plt
 import math
+import os
 
 def main():
-    input_file = "rtf_report.txt"
+   
+
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    input_file = os.path.join(script_dir, "rtf_report.txt")
     times = []
     rtfs = []
 

@@ -1,8 +1,11 @@
 import matplotlib.pyplot as plt
 import math
+import os
 
 def main():
-    input_file = "FPS_Report.txt"
+
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    input_file = os.path.join(script_dir, "FPS_Report.txt")
     times = []
     fps_values = []
 

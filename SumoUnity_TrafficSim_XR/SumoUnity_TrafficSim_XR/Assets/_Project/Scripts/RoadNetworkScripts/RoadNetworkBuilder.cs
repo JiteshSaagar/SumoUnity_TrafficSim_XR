@@ -1,6 +1,5 @@
 ﻿// ==============================
 // RoadNetworkBuilder.cs
-// (Decals clipped by sampling spans outside junction polygons)
 // ==============================
 #if UNITY_EDITOR
 using Assets.Scripts.SUMOImporter.NetFileComponents;
@@ -35,6 +34,10 @@ public class RoadNetworkBuilder : MonoBehaviour
     public Material junctionSurfaceMaterial;
     public Material roadMarkingMaterial;
 
+    // ★ NEW: Zebra Crossing Support
+    [Header("Pedestrian Crossings")]
+    public Material zebraCrossingMaterial;
+
     [Header("Polygon Types (Wood/Terrain/Roadside/Residential)")]
     public Material polygonWoodMaterial;
     public Material polygonTerrainMaterial;
@@ -44,15 +47,16 @@ public class RoadNetworkBuilder : MonoBehaviour
 
     private GameObject roadNetworkRoot;
 
-    // ★ NEW: Ground-layer support --------------------------------------------
     private const string groundLayerName = "Ground";
     private int groundLayer = -1;
-    // ------------------------------------------------------------------------
 
     public Dictionary<string, RoadJunctionData> junctionRecords;
     public Dictionary<string, RoadLaneData> laneRecords;
     public Dictionary<string, RoadEdgeData> edgeRecords;
     public Dictionary<string, PolygonShapeData> polygonShapes;
+
+    // ★ NEW: Dictionary for Crossings
+    public Dictionary<string, SumoCrossingData> crossingRecords = new Dictionary<string, SumoCrossingData>();
 
     private string sumoXmlFolderPath;
 
@@ -64,8 +68,6 @@ public class RoadNetworkBuilder : MonoBehaviour
     private const float laneUvHorizontalScale = 1f;
 
     private readonly Dictionary<string, float> laneWidthMap = new();
-
-    // NEW: cache junction polygons (Unity XZ plane)
     private readonly List<Vector2[]> _junctionPolys2D = new();
 
     public void LoadSumoXmlFiles(string sumoFilesFolder)
@@ -80,17 +82,17 @@ public class RoadNetworkBuilder : MonoBehaviour
         laneRecords?.Clear();
         edgeRecords?.Clear();
         polygonShapes?.Clear();
+        crossingRecords?.Clear();
         _junctionPolys2D.Clear();
 
         sumoXmlFolderPath = sumoFilesFolder;
 
-        // ★ NEW: cache “Ground” layer index once
         if (groundLayer < 0) groundLayer = LayerMask.NameToLayer(groundLayerName);
         if (groundLayer < 0)
             Debug.LogWarning($"Layer \"{groundLayerName}\" does not exist – objects will keep their current layer.");
 
         roadNetworkRoot = new GameObject("RoadNetworkRoot");
-        if (groundLayer >= 0) roadNetworkRoot.layer = groundLayer;        // ★ NEW
+        if (groundLayer >= 0) roadNetworkRoot.layer = groundLayer;
 
         var netFilePath = Path.Combine(sumoXmlFolderPath, "Sumo2Unity.net.xml");
         var polyFilePath = Path.Combine(sumoXmlFolderPath, "Sumo2Unity.poly.xml");
@@ -99,6 +101,7 @@ public class RoadNetworkBuilder : MonoBehaviour
         edgeRecords = new();
         junctionRecords = new();
         polygonShapes = new();
+        crossingRecords = new();
 
         NetType netFile;
         {
@@ -106,6 +109,45 @@ public class RoadNetworkBuilder : MonoBehaviour
             using var fs = new FileStream(netFilePath, FileMode.Open, FileAccess.Read);
             using var rd = new StreamReader(fs);
             netFile = (NetType)serializer.Deserialize(rd);
+        }
+
+        // ★ NEW: Parse Crossings bypassing XmlSerializer schema
+        try
+        {
+            System.Xml.XmlDocument xmlDoc = new System.Xml.XmlDocument();
+            xmlDoc.Load(netFilePath);
+
+            // Look specifically for edge tags where function="crossing"
+            System.Xml.XmlNodeList crossingEdges = xmlDoc.SelectNodes("//edge[@function='crossing']");
+            if (crossingEdges != null)
+            {
+                int cIndex = 0;
+                foreach (System.Xml.XmlNode edgeNode in crossingEdges)
+                {
+                    System.Xml.XmlNode laneNode = edgeNode.SelectSingleNode("lane");
+                    if (laneNode != null)
+                    {
+                        string cId = edgeNode.Attributes["id"] != null ? edgeNode.Attributes["id"].Value : $"auto_crossing_{cIndex++}";
+
+                        string shape = "";
+                        if (laneNode.Attributes["shape"] != null)
+                        {
+                            shape = laneNode.Attributes["shape"].Value;
+                        }
+
+                        float width = laneNode.Attributes["width"] != null ? float.Parse(laneNode.Attributes["width"].Value) : 3.0f;
+
+                        if (!string.IsNullOrEmpty(shape) && !crossingRecords.ContainsKey(cId))
+                        {
+                            crossingRecords.Add(cId, new SumoCrossingData(cId, "unknown", shape, width));
+                        }
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.LogError($"Failed to parse custom crossing tags: {ex.Message}");
         }
 
         if (!string.IsNullOrEmpty(netFile.Location?.ConvBoundary))
@@ -135,7 +177,6 @@ public class RoadNetworkBuilder : MonoBehaviour
 
             if (string.IsNullOrEmpty(jt.X) || string.IsNullOrEmpty(jt.Y))
             {
-                Debug.LogError($"Junction {jt.Id} missing X/Y. Skipping.");
                 continue;
             }
 
@@ -161,11 +202,7 @@ public class RoadNetworkBuilder : MonoBehaviour
 
         foreach (EdgeType et in netFile.Edge)
         {
-            if (string.IsNullOrEmpty(et.From))
-            {
-                Debug.LogWarning($"Edge {et.Id} has no 'from'. Skipping.");
-                continue;
-            }
+            if (string.IsNullOrEmpty(et.From)) continue;
 
             var newEdge = new RoadEdgeData(et.Id, et.From, et.To, et.Priority, et.Shape);
             edgeRecords[et.Id] = newEdge;
@@ -219,7 +256,6 @@ public class RoadNetworkBuilder : MonoBehaviour
             Debug.LogError($"Failed to deserialize polygon file: {e}");
         }
 
-        // ★ NEW: ensure polygons just created inherit the Ground layer
         SetLayerRecursively(roadNetworkRoot, groundLayer);
     }
 
@@ -242,13 +278,12 @@ public class RoadNetworkBuilder : MonoBehaviour
 
                 var laneObj = new GameObject($"LaneSegment_{laneCounter++}");
                 laneObj.transform.SetParent(roadNetworkRoot.transform);
-                if (groundLayer >= 0) laneObj.layer = groundLayer;  // ★ NEW
+                if (groundLayer >= 0) laneObj.layer = groundLayer;
                 var mf = laneObj.AddComponent<MeshFilter>();
                 var mr = laneObj.AddComponent<MeshRenderer>();
                 mf.sharedMesh = laneMesh;
                 mr.sharedMaterial = roadSurfaceMaterial ?? GetFallbackMaterial();
 
-                // swapped names
                 SpawnMarkingDecals(ExtractLeftSideVertices(laneMesh), "LaneMarking_Right", laneObj.transform);
                 SpawnMarkingDecals(ExtractRightSideVertices(laneMesh), "LaneMarking_Left", laneObj.transform);
 
@@ -271,7 +306,6 @@ public class RoadNetworkBuilder : MonoBehaviour
                 verts2D[i] = new Vector2((float)(xy[0] - originX), (float)(xy[1] - originY));
             }
 
-            // cache for clipping
             _junctionPolys2D.Add((Vector2[])verts2D.Clone());
 
             MeshTriangulator triangulator = new MeshTriangulator(verts2D);
@@ -300,18 +334,44 @@ public class RoadNetworkBuilder : MonoBehaviour
 
             GameObject jObj = new GameObject($"Junction_{junctionCounter++}");
             jObj.transform.SetParent(roadNetworkRoot.transform);
-            if (groundLayer >= 0) jObj.layer = groundLayer;           // ★ NEW
+            if (groundLayer >= 0) jObj.layer = groundLayer;
             var jMf = jObj.AddComponent<MeshFilter>();
             var jMr = jObj.AddComponent<MeshRenderer>();
             jMf.mesh = junctionMesh;
             jMr.material = junctionSurfaceMaterial ?? GetFallbackMaterial();
         }
 
-        // ★ NEW: make sure every child built above is on the Ground layer
+        // ★ NEW: Build Zebra Crossings (Using Lane Generator)
+        int crossingCounter = 0;
+        foreach (SumoCrossingData crossing in crossingRecords.Values)
+        {
+            if (crossing.shapePoints.Count < 2) continue; // Need at least 2 points
+
+            Vector3[] pathPoints = new Vector3[crossing.shapePoints.Count];
+            for (int i = 0; i < crossing.shapePoints.Count; i++)
+            {
+                pathPoints[i] = new Vector3(crossing.shapePoints[i].x - originX, 0f, crossing.shapePoints[i].z - originY);
+            }
+
+            Mesh crossingMesh = CreateLaneMesh(pathPoints, crossing.width, 1f, 1f);
+            if (crossingMesh == null) continue;
+
+            GameObject crossingObj = new GameObject($"Crossing_{crossingCounter++}_{crossing.crossingId}");
+            crossingObj.transform.SetParent(roadNetworkRoot.transform);
+            if (groundLayer >= 0) crossingObj.layer = groundLayer;
+
+            crossingObj.transform.localPosition = new Vector3(0f, 0.015f, 0f);
+
+            var cMf = crossingObj.AddComponent<MeshFilter>();
+            var cMr = crossingObj.AddComponent<MeshRenderer>();
+            cMf.mesh = crossingMesh;
+
+            cMr.material = zebraCrossingMaterial ?? roadMarkingMaterial ?? GetFallbackMaterial();
+        }
+
         SetLayerRecursively(roadNetworkRoot, groundLayer);
     }
 
-    // -------------------- helper --------------------------------------------
     private static void SetLayerRecursively(GameObject obj, int layer)
     {
         if (layer < 0) return;
@@ -319,7 +379,6 @@ public class RoadNetworkBuilder : MonoBehaviour
         foreach (Transform child in obj.transform)
             SetLayerRecursively(child.gameObject, layer);
     }
-    // ------------------------------------------------------------------------
 
     private Vector3 ToUnity(double x, double y) => new((float)(x - originX), 0f, (float)(y - originY));
 
@@ -364,7 +423,7 @@ public class RoadNetworkBuilder : MonoBehaviour
 
         GameObject polyGO = new GameObject($"Shape_{polygonId}");
         polyGO.transform.SetParent(roadNetworkRoot.transform);
-        if (groundLayer >= 0) polyGO.layer = groundLayer;             // ★ NEW
+        if (groundLayer >= 0) polyGO.layer = groundLayer;
 
         if (!string.IsNullOrEmpty(polygonType) && polygonType.ToLowerInvariant().Contains("terrain"))
             polyGO.transform.localPosition = new Vector3(0f, -0.02f, 0f);
@@ -501,20 +560,15 @@ public class RoadNetworkBuilder : MonoBehaviour
         return pts;
     }
 
-    // ───────────────────────── Decal spawning (SPAN based) ───────────────────
     private struct Span { public float s, e; public Span(float s, float e) { this.s = s; this.e = e; } }
 
     private void SpawnMarkingDecals(Vector3[] boundaryPts, string name, Transform parent)
     {
-        if (roadMarkingMaterial == null)
-        {
-            Debug.LogWarning("No 'roadMarkingMaterial' assigned!");
-            return;
-        }
+        if (roadMarkingMaterial == null) return;
         if (boundaryPts == null || boundaryPts.Length < 2) return;
 
-        const float stepSize = 3f;        // spacing between decals (m)
-        const float sampleStep = 0.25f;     // resolution for span detection (m)
+        const float stepSize = 3f;
+        const float sampleStep = 0.25f;
         Vector3 baseSize = new Vector3(0.1f, 0.2f, 3f);
 
         int count = boundaryPts.Length;
@@ -525,7 +579,6 @@ public class RoadNetworkBuilder : MonoBehaviour
 
         float total = cum[count - 1];
 
-        // 1) Detect outside spans
         var spans = new List<Span>();
         bool wasOutside = false;
         float spanStart = 0f;
@@ -547,7 +600,6 @@ public class RoadNetworkBuilder : MonoBehaviour
         }
         if (wasOutside) spans.Add(new Span(spanStart, total));
 
-        // 2) Spawn decals inside spans only
         foreach (var sp in spans)
         {
             for (float d = sp.s; d <= sp.e; d += stepSize)
@@ -556,25 +608,23 @@ public class RoadNetworkBuilder : MonoBehaviour
 
                 float halfLen = baseSize.z * 0.5f;
 
-                // clamp projector length if near span edges
                 float maxBack = Mathf.Min(halfLen, d - sp.s);
                 float maxFwd = Mathf.Min(halfLen, sp.e - d);
                 float length = maxBack + maxFwd;
                 if (length < 0.11f) continue;
 
-                // shift center so the shortened projector still lies fully in the span
                 center += dir * (maxFwd - maxBack) * 0.5f;
                 center += Vector3.up * 0.01f;
 
                 GameObject decalObj = new GameObject($"{name}_Decal");
                 decalObj.transform.SetParent(parent != null ? parent : roadNetworkRoot.transform);
-                if (groundLayer >= 0) decalObj.layer = groundLayer;     // ★ NEW
+                if (groundLayer >= 0) decalObj.layer = groundLayer;
                 decalObj.transform.position = center;
                 decalObj.transform.rotation = Quaternion.LookRotation(-dir, Vector3.up);
 
                 var proj = decalObj.AddComponent<DecalProjector>();
                 proj.material = roadMarkingMaterial;
-                proj.size = new Vector3(baseSize.x, baseSize.y, length * 2f); // because length we computed is halfBack+halfFwd
+                proj.size = new Vector3(baseSize.x, baseSize.y, length * 2f);
                 proj.drawDistance = 250f;
             }
         }
@@ -635,7 +685,7 @@ public class RoadNetworkBuilder : MonoBehaviour
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// LaneSegmentDecalController  (LEFT/RIGHT names swapped logic)
+// LaneSegmentDecalController 
 // ─────────────────────────────────────────────────────────────────────────────
 [ExecuteInEditMode]
 [DisallowMultipleComponent]

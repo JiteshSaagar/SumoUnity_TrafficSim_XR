@@ -275,6 +275,37 @@ namespace Assets.Scripts.SUMOImporter.NetFileComponents
 }
 
 //===============================================================
+// 4.5) SumoCrossingData (NEW: For Zebra Crossings)
+//===============================================================
+public class SumoCrossingData
+{
+    public string crossingId;
+    public string junctionId;
+    public float width;
+    public List<Vector3> shapePoints;
+
+    public SumoCrossingData(string cId, string jId, string shapeCoordinates, float crossingWidth)
+    {
+        crossingId = cId;
+        junctionId = jId;
+        width = crossingWidth;
+        shapePoints = new List<Vector3>();
+
+        if (!string.IsNullOrEmpty(shapeCoordinates))
+        {
+            foreach (string coordPair in shapeCoordinates.Split(' '))
+            {
+                string[] coords = coordPair.Split(',');
+                float xC = Convert.ToSingle(coords[0]);
+                float zC = Convert.ToSingle(coords[1]); // SUMO's Y maps to Unity's Z
+
+                shapePoints.Add(new Vector3(xC, 0f, zC));
+            }
+        }
+    }
+}
+
+//===============================================================
 // 5) MeshTriangulator (was Triangulator)
 //===============================================================
 public class MeshTriangulator

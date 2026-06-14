@@ -15,8 +15,17 @@ public class SimulationController : MonoBehaviour
     private Dictionary<string, GameObject> vehicleObjects = new Dictionary<string, GameObject>();
     private string vehicleDataJson = "{}";
     private object vehicleDataLock = new object();
-    private string egoVehicleId = "f_0.0";
+    
+    [Header("Ego Settings")]
     public GameObject egoVehicle;
+    public string egoVehicleId = "f_0.0";
+    [Tooltip("Check this if your ego is a VR Pedestrian so SUMO knows how to process it.")]
+    public bool isPedestrian = false;
+    [Tooltip("Check this if the Ego is already in the scene (like an XR Origin) so Unity doesn't clone it.")]
+    public bool isSceneObject = false; 
+    public Vector3 egoVehicleInitialPosition = new Vector3(0f, 0f, 0f);
+    public Quaternion egoVehicleInitialRotation = Quaternion.Euler(0f, 90f, 0f);
+
     private GameObject f_1_0;
     private Vector3 previousPosition;
     private Vector3 currentPosition;
@@ -24,23 +33,19 @@ public class SimulationController : MonoBehaviour
     private float distanceAccumulator = 0f;
     private float timeAccumulator = 0f;
     private readonly ConcurrentQueue<Action> mainThreadActions = new ConcurrentQueue<Action>();
-    public Vector3 egoVehicleInitialPosition = new Vector3(0f, 0f, 0f);
-    public Quaternion egoVehicleInitialRotation = Quaternion.Euler(0f, 90f, 0f);
 
     private StreamWriter writer;
 
     [Header("Unity Step Length (seconds)")]
     public float unityStepLength = 0.10f;
 
-    private float fixedTimeAccum = 0f; // Accumulator for FixedUpdate logging
+    private float fixedTimeAccum = 0f; 
 
-    // New variables for timestamp offset
     private bool firstTimestampLogged = false;
     private float firstLoggedTime = 0f;
 
-    // ‑‑‑‑ NEW: traffic‑light handling ‑‑‑‑
     [Header("Add all Junction GameObjects")]
-    public GameObject junctions;           // drag ‘Junctions’ root here
+    public GameObject junctions;           
     private readonly Dictionary<string, GameObject> junctionCache = new();
 
     [Serializable]
@@ -84,20 +89,12 @@ public class SimulationController : MonoBehaviour
     [Header("Add Unity Vehicle Prefab (3DModel) according to Sumo Vehicle Type")]
     public List<CarModel> carModelsList = new List<CarModel>();
 
-    // ── new fields ─────────────────────────────────────────────
-    /// last time we processed a TL message
     private float _lastTlTime = 0f;
-    /// minimum seconds between TL updates
     private float tlUpdateInterval = 1f;
-
-    /// cache last seen state per junction
     private Dictionary<string, string> _lastTlState = new();
 
-    /// <summary>Finds (or creates) SUMO2Unity\SUMOData\Results next to the project.</summary>
-    /// <summary>Finds (or creates) SUMO2Unity\Results next to the project.</summary>
     private static string LocateOrCreateResultsFolder()
     {
-        // projectRoot = folder that *contains* "Assets"
         string projectRoot = Directory.GetParent(Application.dataPath).FullName;
         DirectoryInfo dir = new DirectoryInfo(projectRoot);
 
@@ -107,10 +104,9 @@ public class SimulationController : MonoBehaviour
             if (Directory.Exists(candidate))
                 return candidate;
 
-            dir = dir.Parent;                       // walk upward
+            dir = dir.Parent;                       
         }
 
-        // Not found – create it next to the project
         string fallback = Path.Combine(projectRoot, "Results");
         Directory.CreateDirectory(fallback);
         return fallback;
@@ -133,9 +129,7 @@ public class SimulationController : MonoBehaviour
         }
 
         SumoRequesterStart();
-        //StartCoroutine(FindGameObjectAfterDelay(1.0f));
 
-        // 3) open log file in SUMOData folder
         string sumoDataDir = LocateOrCreateResultsFolder();
         string logPath = Path.Combine(sumoDataDir, "vehicle_data_report.txt");
         writer = new StreamWriter(logPath, append: false, Encoding.UTF8);
@@ -150,11 +144,19 @@ public class SimulationController : MonoBehaviour
             return;
         }
 
-        Vector3 initialPosition = egoVehicleInitialPosition;
-        Quaternion initialRotation = egoVehicleInitialRotation;
-        egoVehicle = GameObject.Instantiate(egoVehicle, initialPosition, initialRotation);
+        if (!isSceneObject)
+        {
+            egoVehicle = GameObject.Instantiate(egoVehicle, egoVehicleInitialPosition, egoVehicleInitialRotation);
+        }
+        else
+        {
+            egoVehicle.transform.position = egoVehicleInitialPosition;
+            egoVehicle.transform.rotation = egoVehicleInitialRotation;
+        }
+
         egoVehicle.name = egoVehicleId;
         vehicleObjects.Add(egoVehicleId, egoVehicle);
+        previousPosition = egoVehicle.transform.position;
     }
 
     void Update()
@@ -180,7 +182,6 @@ public class SimulationController : MonoBehaviour
 
     private void FixedUpdate()
     {
-        // Only log if we have started and not stopped recording
         if (!RecordingManager.startRecordingFromZero)
         {
             return;
@@ -191,19 +192,16 @@ public class SimulationController : MonoBehaviour
         {
             float currentTime = Time.fixedTime;
 
-            // If this is the first timestamp we log, record it as the start
             if (!firstTimestampLogged)
             {
                 firstLoggedTime = currentTime;
                 firstTimestampLogged = true;
             }
 
-            // Log time adjusted by first logged time
             float logTime = currentTime - firstLoggedTime;
             LogVehicleData(logTime);
             fixedTimeAccum = 0f;
         }
-
     }
 
     private void LogVehicleData(float relativeLogTime)
@@ -240,19 +238,39 @@ public class SimulationController : MonoBehaviour
             return "{}";
         }
 
-        GameObject egoVehicle = vehicleObjects[egoVehicleId];
-        long_speed = egoVehicle.GetComponent<Rigidbody>().linearVelocity.magnitude;
+        GameObject egoObj = vehicleObjects[egoVehicleId];
+        currentPosition = egoObj.transform.position;
+        
+        // Safely calculate velocity manually to prevent crashes on objects without Rigidbodies
+        float dt = Time.deltaTime > 0f ? Time.deltaTime : 0.02f;
+        Vector3 velocity = (currentPosition - previousPosition) / dt;
 
-        Vector3 position = egoVehicle.transform.position;
-        float unroundangle = egoVehicle.transform.rotation.eulerAngles.y;
+        float vertical_speed = 0f;
+        float lateral_speed = 0f;
+
+        Rigidbody rb = egoObj.GetComponent<Rigidbody>();
+        if (rb != null)
+        {
+            long_speed = rb.linearVelocity.magnitude;
+            vertical_speed = rb.linearVelocity.y;
+            lateral_speed = rb.linearVelocity.z;
+        }
+        else
+        {
+            long_speed = velocity.magnitude;
+            vertical_speed = velocity.y;
+            lateral_speed = velocity.z;
+        }
+
+        previousPosition = currentPosition;
+
+        float unroundangle = egoObj.transform.rotation.eulerAngles.y;
         double angle = Math.Round(unroundangle, 2);
-        double x = Math.Round(position.x, 2);
-        double y = Math.Round(position.z, 2);
-        double z = Math.Round(position.y, 2);
-        string type = "ego";
-
-        float vertical_speed = (float)Math.Round(egoVehicle.GetComponent<Rigidbody>().linearVelocity.y, 2);
-        float lateral_speed = (float)Math.Round(egoVehicle.GetComponent<Rigidbody>().linearVelocity.z, 2);
+        double x = Math.Round(currentPosition.x, 2);
+        double y = Math.Round(currentPosition.z, 2);
+        double z = Math.Round(currentPosition.y, 2);
+        
+        string type = isPedestrian ? "pedestrian" : "ego";
 
         Vehicle egoVehicleData = new Vehicle();
         egoVehicleData.vehicle_id = egoVehicleId;
@@ -260,8 +278,8 @@ public class SimulationController : MonoBehaviour
         egoVehicleData.angle = angle;
         egoVehicleData.type = type;
         egoVehicleData.long_speed = (float)Math.Round(long_speed, 2);
-        egoVehicleData.vert_speed = vertical_speed;
-        egoVehicleData.lat_speed = lateral_speed;
+        egoVehicleData.vert_speed = (float)Math.Round(vertical_speed, 2);
+        egoVehicleData.lat_speed = (float)Math.Round(lateral_speed, 2);
 
         string jsonData = JsonHelper.ToJson(new Vehicle[] { egoVehicleData });
         return jsonData;
@@ -293,17 +311,14 @@ public class SimulationController : MonoBehaviour
                 RecordingManager.recordingStartTime = Time.time;
                 Debug.Log("Received START_RECORDING command from SUMO. Starting logs from zero now.");
 
-                // Reset offset logging variables when we start recording
                 firstTimestampLogged = false;
                 firstLoggedTime = 0f;
             }
             else if (common.command == "STOP_RECORDING")
             {
-                // Stop recording
                 RecordingManager.startRecordingFromZero = false;
                 Debug.Log("Received STOP_RECORDING command from SUMO. Stopping logs.");
 
-                // Remove all surrounding cars except ego
                 var nonEgoKeys = vehicleObjects.Keys.Where(k => k != egoVehicleId).ToList();
                 foreach (var vid in nonEgoKeys)
                 {
@@ -313,7 +328,7 @@ public class SimulationController : MonoBehaviour
                 }
             }
 
-            return; // No further vehicle parsing needed
+            return; 
         }
         else if (common.type == "vehicles")
         {
@@ -377,16 +392,13 @@ public class SimulationController : MonoBehaviour
                     vehicleObjects.Add(vehicle.vehicle_id, newVehicle);
                 }
             }
-
         }
         else if (common.type == "trafficlights")
         {
-            // 2) parse wrapper
             var wrapper = JsonUtility.FromJson<TrafficLightsWrapper>(message);
 
             foreach (var tl in wrapper.lights)
             {
-                // only repaint if state actually changed
                 if (!_lastTlState.TryGetValue(tl.junction_id, out var prev)
                  || prev != tl.state)
                 {
@@ -408,7 +420,6 @@ public class SimulationController : MonoBehaviour
 
     private void ChangeTrafficStatus(string junctionID, string state)
     {
-        // find & cache the J4 GameObject exactly as before
         if (!junctionCache.TryGetValue(junctionID, out GameObject junctionGO))
         {
             var t = junctions.transform.Find(junctionID);
@@ -417,24 +428,19 @@ public class SimulationController : MonoBehaviour
             junctionCache[junctionID] = junctionGO;
         }
 
-        // now for each character in the state string
         for (int i = 0; i < state.Length; i++)
         {
-            // look for the child named "Head0", "Head1", etc.
             var headTransform = junctionGO.transform.Find($"Head{i}");
             if (headTransform == null)
             {
-                Debug.LogWarning($"  Head{i} not found under {junctionID}");
                 continue;
             }
             SetSignalState(state[i], headTransform.gameObject);
         }
     }
 
-
     private void SetSignalState(char c, GameObject head)
     {
-        // look for your three meshes under each head
         var green = FindChildRecursive(head.transform, "green_light");
         var yellow = FindChildRecursive(head.transform, "yellow_light");
         var red = FindChildRecursive(head.transform, "red_light");
@@ -453,7 +459,6 @@ public class SimulationController : MonoBehaviour
         }
         return null;
     }
-
 
     public static class JsonHelper
     {

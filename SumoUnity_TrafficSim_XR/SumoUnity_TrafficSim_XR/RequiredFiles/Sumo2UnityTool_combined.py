@@ -8,4 +8,4 @@
 
 
 VERSION      = "Sumo2Unity v2.0.0"
-LINKEDIN_URL = "https://www.linkedin.com/in/ahmadmohammadi1441/"
+

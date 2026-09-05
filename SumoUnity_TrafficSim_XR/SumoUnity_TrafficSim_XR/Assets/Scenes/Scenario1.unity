@@ -813,11 +813,11 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   m_Material: {fileID: 2100000, guid: 85c0a2b97bd89294e8b4083045642dce, type: 2}
   m_DrawDistance: 250
-  m_FadeScale: 0.9
+  m_FadeScale: 1
   m_StartAngleFade: 180
   m_EndAngleFade: 180
   m_UVScale: {x: 1, y: 1}
-  m_UVBias: {x: 0, y: 0}
+  m_UVBias: {x: 0, y: 0.2}
   m_DecalLayerMask: 1
   m_ScaleMode: 0
   m_Offset: {x: 0, y: 0, z: 0.5}
@@ -4417,11 +4417,11 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   m_Material: {fileID: 2100000, guid: 85c0a2b97bd89294e8b4083045642dce, type: 2}
   m_DrawDistance: 250
-  m_FadeScale: 0.9
+  m_FadeScale: 1
   m_StartAngleFade: 180
   m_EndAngleFade: 180
   m_UVScale: {x: 1, y: 1}
-  m_UVBias: {x: 0, y: 0}
+  m_UVBias: {x: 0, y: 0.2}
   m_DecalLayerMask: 1
   m_ScaleMode: 0
   m_Offset: {x: 0, y: 0, z: 0.5}
@@ -9801,11 +9801,11 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   m_Material: {fileID: 2100000, guid: 85c0a2b97bd89294e8b4083045642dce, type: 2}
   m_DrawDistance: 250
-  m_FadeScale: 0.9
+  m_FadeScale: 1
   m_StartAngleFade: 180
   m_EndAngleFade: 180
   m_UVScale: {x: 1, y: 1}
-  m_UVBias: {x: 0, y: 0}
+  m_UVBias: {x: 0, y: 0.2}
   m_DecalLayerMask: 1
   m_ScaleMode: 0
   m_Offset: {x: 0, y: 0, z: 0.5}
@@ -12911,11 +12911,11 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   m_Material: {fileID: 2100000, guid: 85c0a2b97bd89294e8b4083045642dce, type: 2}
   m_DrawDistance: 250
-  m_FadeScale: 0.9
+  m_FadeScale: 1
   m_StartAngleFade: 180
   m_EndAngleFade: 180
   m_UVScale: {x: 1, y: 1}
-  m_UVBias: {x: 0, y: 0}
+  m_UVBias: {x: 0, y: 0.2}
   m_DecalLayerMask: 1
   m_ScaleMode: 0
   m_Offset: {x: 0, y: 0, z: 0.5}
@@ -13202,11 +13202,11 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   m_Material: {fileID: 2100000, guid: 85c0a2b97bd89294e8b4083045642dce, type: 2}
   m_DrawDistance: 250
-  m_FadeScale: 0.9
+  m_FadeScale: 1
   m_StartAngleFade: 180
   m_EndAngleFade: 180
   m_UVScale: {x: 1, y: 1}
-  m_UVBias: {x: 0, y: 0}
+  m_UVBias: {x: 0, y: 0.2}
   m_DecalLayerMask: 1
   m_ScaleMode: 0
   m_Offset: {x: 0, y: 0, z: 0.5}
@@ -15648,11 +15648,11 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   m_Material: {fileID: 2100000, guid: 85c0a2b97bd89294e8b4083045642dce, type: 2}
   m_DrawDistance: 250
-  m_FadeScale: 0.9
+  m_FadeScale: 1
   m_StartAngleFade: 180
   m_EndAngleFade: 180
   m_UVScale: {x: 1, y: 1}
-  m_UVBias: {x: 0, y: 0}
+  m_UVBias: {x: 0, y: 0.2}
   m_DecalLayerMask: 1
   m_ScaleMode: 0
   m_Offset: {x: 0, y: 0, z: 0.5}
@@ -21794,11 +21794,11 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   m_Material: {fileID: 2100000, guid: 85c0a2b97bd89294e8b4083045642dce, type: 2}
   m_DrawDistance: 250
-  m_FadeScale: 0.9
+  m_FadeScale: 1
   m_StartAngleFade: 180
   m_EndAngleFade: 180
   m_UVScale: {x: 1, y: 1}
-  m_UVBias: {x: 0, y: 0}
+  m_UVBias: {x: 0, y: 0.2}
   m_DecalLayerMask: 1
   m_ScaleMode: 0
   m_Offset: {x: 0, y: 0, z: 0.5}
@@ -22437,11 +22437,11 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   m_Material: {fileID: 2100000, guid: 85c0a2b97bd89294e8b4083045642dce, type: 2}
   m_DrawDistance: 250
-  m_FadeScale: 0.9
+  m_FadeScale: 1
   m_StartAngleFade: 180
   m_EndAngleFade: 180
   m_UVScale: {x: 1, y: 1}
-  m_UVBias: {x: 0, y: 0}
+  m_UVBias: {x: 0, y: 0.2}
   m_DecalLayerMask: 1
   m_ScaleMode: 0
   m_Offset: {x: 0, y: 0, z: 0.5}
@@ -25902,11 +25902,11 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   m_Material: {fileID: 2100000, guid: 85c0a2b97bd89294e8b4083045642dce, type: 2}
   m_DrawDistance: 250
-  m_FadeScale: 0.9
+  m_FadeScale: 1
   m_StartAngleFade: 180
   m_EndAngleFade: 180
   m_UVScale: {x: 1, y: 1}
-  m_UVBias: {x: 0, y: 0}
+  m_UVBias: {x: 0, y: 0.2}
   m_DecalLayerMask: 1
   m_ScaleMode: 0
   m_Offset: {x: 0, y: 0, z: 0.5}
@@ -26287,11 +26287,11 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   m_Material: {fileID: 2100000, guid: 85c0a2b97bd89294e8b4083045642dce, type: 2}
   m_DrawDistance: 250
-  m_FadeScale: 0.9
+  m_FadeScale: 1
   m_StartAngleFade: 180
   m_EndAngleFade: 180
   m_UVScale: {x: 1, y: 1}
-  m_UVBias: {x: 0, y: 0}
+  m_UVBias: {x: 0, y: 0.2}
   m_DecalLayerMask: 1
   m_ScaleMode: 0
   m_Offset: {x: 0, y: 0, z: 0.5}
@@ -27416,11 +27416,11 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   m_Material: {fileID: 2100000, guid: 85c0a2b97bd89294e8b4083045642dce, type: 2}
   m_DrawDistance: 250
-  m_FadeScale: 0.9
+  m_FadeScale: 1
   m_StartAngleFade: 180
   m_EndAngleFade: 180
   m_UVScale: {x: 1, y: 1}
-  m_UVBias: {x: 0, y: 0}
+  m_UVBias: {x: 0, y: 0.2}
   m_DecalLayerMask: 1
   m_ScaleMode: 0
   m_Offset: {x: 0, y: 0, z: 0.5}
@@ -28532,116 +28532,6 @@ MonoBehaviour:
   m_Offset: {x: 0, y: 0, z: 0.5}
   m_Size: {x: 0.1, y: 0.2, z: 6}
   m_FadeFactor: 1
---- !u!1001 &1245513115
-PrefabInstance:
-  m_ObjectHideFlags: 0
-  serializedVersion: 2
-  m_Modification:
-    serializedVersion: 3
-    m_TransformParent: {fileID: 0}
-    m_Modifications:
-    - target: {fileID: -8679921383154817045, guid: db4fc2117cf11274c8bebccc3e8575bb, type: 3}
-      propertyPath: m_LocalPosition.x
-      value: 85.01
-      objectReference: {fileID: 0}
-    - target: {fileID: -8679921383154817045, guid: db4fc2117cf11274c8bebccc3e8575bb, type: 3}
-      propertyPath: m_LocalPosition.y
-      value: -0.019980492
-      objectReference: {fileID: 0}
-    - target: {fileID: -8679921383154817045, guid: db4fc2117cf11274c8bebccc3e8575bb, type: 3}
-      propertyPath: m_LocalPosition.z
-      value: -7.61
-      objectReference: {fileID: 0}
-    - target: {fileID: -8679921383154817045, guid: db4fc2117cf11274c8bebccc3e8575bb, type: 3}
-      propertyPath: m_LocalRotation.w
-      value: 1
-      objectReference: {fileID: 0}
-    - target: {fileID: -8679921383154817045, guid: db4fc2117cf11274c8bebccc3e8575bb, type: 3}
-      propertyPath: m_LocalRotation.x
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: -8679921383154817045, guid: db4fc2117cf11274c8bebccc3e8575bb, type: 3}
-      propertyPath: m_LocalRotation.y
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: -8679921383154817045, guid: db4fc2117cf11274c8bebccc3e8575bb, type: 3}
-      propertyPath: m_LocalRotation.z
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: -8679921383154817045, guid: db4fc2117cf11274c8bebccc3e8575bb, type: 3}
-      propertyPath: m_LocalEulerAnglesHint.x
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: -8679921383154817045, guid: db4fc2117cf11274c8bebccc3e8575bb, type: 3}
-      propertyPath: m_LocalEulerAnglesHint.y
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: -8679921383154817045, guid: db4fc2117cf11274c8bebccc3e8575bb, type: 3}
-      propertyPath: m_LocalEulerAnglesHint.z
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 919132149155446097, guid: db4fc2117cf11274c8bebccc3e8575bb, type: 3}
-      propertyPath: m_Name
-      value: Blaisdale Montessori School
-      objectReference: {fileID: 0}
-    m_RemovedComponents: []
-    m_RemovedGameObjects: []
-    m_AddedGameObjects: []
-    m_AddedComponents:
-    - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: db4fc2117cf11274c8bebccc3e8575bb, type: 3}
-      insertIndex: -1
-      addedObject: {fileID: 1245513118}
-    - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: db4fc2117cf11274c8bebccc3e8575bb, type: 3}
-      insertIndex: -1
-      addedObject: {fileID: 1245513117}
-  m_SourcePrefab: {fileID: 100100000, guid: db4fc2117cf11274c8bebccc3e8575bb, type: 3}
---- !u!1 &1245513116 stripped
-GameObject:
-  m_CorrespondingSourceObject: {fileID: 919132149155446097, guid: db4fc2117cf11274c8bebccc3e8575bb, type: 3}
-  m_PrefabInstance: {fileID: 1245513115}
-  m_PrefabAsset: {fileID: 0}
---- !u!65 &1245513117
-BoxCollider:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1245513116}
-  m_Material: {fileID: 0}
-  m_IncludeLayers:
-    serializedVersion: 2
-    m_Bits: 0
-  m_ExcludeLayers:
-    serializedVersion: 2
-    m_Bits: 0
-  m_LayerOverridePriority: 0
-  m_IsTrigger: 0
-  m_ProvidesContacts: 0
-  m_Enabled: 1
-  serializedVersion: 3
-  m_Size: {x: 12.295303, y: 11.836471, z: 25.963018}
-  m_Center: {x: -0.266037, y: 5.4182343, z: 6.1861887}
---- !u!65 &1245513118
-BoxCollider:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1245513116}
-  m_Material: {fileID: 0}
-  m_IncludeLayers:
-    serializedVersion: 2
-    m_Bits: 0
-  m_ExcludeLayers:
-    serializedVersion: 2
-    m_Bits: 0
-  m_LayerOverridePriority: 0
-  m_IsTrigger: 0
-  m_ProvidesContacts: 0
-  m_Enabled: 1
-  serializedVersion: 3
-  m_Size: {x: 13.332756, y: 5.011086, z: 13.856024}
-  m_Center: {x: -1.8833046, y: 2.0055425, z: -12.453237}
 --- !u!1 &1246210973
 GameObject:
   m_ObjectHideFlags: 0
@@ -31114,11 +31004,11 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   m_Material: {fileID: 2100000, guid: 85c0a2b97bd89294e8b4083045642dce, type: 2}
   m_DrawDistance: 250
-  m_FadeScale: 0.9
+  m_FadeScale: 1
   m_StartAngleFade: 180
   m_EndAngleFade: 180
   m_UVScale: {x: 1, y: 1}
-  m_UVBias: {x: 0, y: 0}
+  m_UVBias: {x: 0, y: 0.2}
   m_DecalLayerMask: 1
   m_ScaleMode: 0
   m_Offset: {x: 0, y: 0, z: 0.5}
@@ -33291,6 +33181,32 @@ Mesh:
     offset: 0
     size: 0
     path: 
+--- !u!1 &1451227130 stripped
+GameObject:
+  m_CorrespondingSourceObject: {fileID: 4898798253176580536, guid: a949827ceeae0224f908d0b3c397201e, type: 3}
+  m_PrefabInstance: {fileID: 1914527537}
+  m_PrefabAsset: {fileID: 0}
+--- !u!65 &1451227132
+BoxCollider:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1451227130}
+  m_Material: {fileID: 0}
+  m_IncludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_ExcludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_LayerOverridePriority: 0
+  m_IsTrigger: 0
+  m_ProvidesContacts: 0
+  m_Enabled: 1
+  serializedVersion: 3
+  m_Size: {x: 36.584167, y: 10.999999, z: 16.224272}
+  m_Center: {x: 0.20791626, y: 5.4999986, z: 0.6378641}
 --- !u!1 &1452790031
 GameObject:
   m_ObjectHideFlags: 0
@@ -33643,11 +33559,11 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   m_Material: {fileID: 2100000, guid: 85c0a2b97bd89294e8b4083045642dce, type: 2}
   m_DrawDistance: 250
-  m_FadeScale: 0.9
+  m_FadeScale: 1
   m_StartAngleFade: 180
   m_EndAngleFade: 180
   m_UVScale: {x: 1, y: 1}
-  m_UVBias: {x: 0, y: 0}
+  m_UVBias: {x: 0, y: 0.2}
   m_DecalLayerMask: 1
   m_ScaleMode: 0
   m_Offset: {x: 0, y: 0, z: 0.5}
@@ -34376,11 +34292,11 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   m_Material: {fileID: 2100000, guid: 85c0a2b97bd89294e8b4083045642dce, type: 2}
   m_DrawDistance: 250
-  m_FadeScale: 0.9
+  m_FadeScale: 1
   m_StartAngleFade: 180
   m_EndAngleFade: 180
   m_UVScale: {x: 1, y: 1}
-  m_UVBias: {x: 0, y: 0}
+  m_UVBias: {x: 0, y: 0.2}
   m_DecalLayerMask: 1
   m_ScaleMode: 0
   m_Offset: {x: 0, y: 0, z: 0.5}
@@ -35248,11 +35164,11 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   m_Material: {fileID: 2100000, guid: 85c0a2b97bd89294e8b4083045642dce, type: 2}
   m_DrawDistance: 250
-  m_FadeScale: 0.9
+  m_FadeScale: 1
   m_StartAngleFade: 180
   m_EndAngleFade: 180
   m_UVScale: {x: 1, y: 1}
-  m_UVBias: {x: 0, y: 0}
+  m_UVBias: {x: 0, y: 0.2}
   m_DecalLayerMask: 1
   m_ScaleMode: 0
   m_Offset: {x: 0, y: 0, z: 0.5}
@@ -35360,11 +35276,11 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   m_Material: {fileID: 2100000, guid: 85c0a2b97bd89294e8b4083045642dce, type: 2}
   m_DrawDistance: 250
-  m_FadeScale: 0.9
+  m_FadeScale: 1
   m_StartAngleFade: 180
   m_EndAngleFade: 180
   m_UVScale: {x: 1, y: 1}
-  m_UVBias: {x: 0, y: 0}
+  m_UVBias: {x: 0, y: 0.2}
   m_DecalLayerMask: 1
   m_ScaleMode: 0
   m_Offset: {x: 0, y: 0, z: 0.5}
@@ -35752,11 +35668,11 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   m_Material: {fileID: 2100000, guid: 85c0a2b97bd89294e8b4083045642dce, type: 2}
   m_DrawDistance: 250
-  m_FadeScale: 0.9
+  m_FadeScale: 1
   m_StartAngleFade: 180
   m_EndAngleFade: 180
   m_UVScale: {x: 1, y: 1}
-  m_UVBias: {x: 0, y: 0}
+  m_UVBias: {x: 0, y: 0.2}
   m_DecalLayerMask: 1
   m_ScaleMode: 0
   m_Offset: {x: 0, y: 0, z: 0.5}
@@ -36037,7 +35953,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: f2fab187f4e301249b4b2ba4e469206f, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  egoVehicle: {fileID: 3049986642694483780, guid: 61f60f3d3837aa14aa69718e8d595576, type: 3}
+  egoVehicle: {fileID: 2471852994914885337, guid: 3964cd274d2587648aa2f630736264d0, type: 3}
   egoVehicleId: f_0.0
   isPedestrian: 0
   isSceneObject: 0
@@ -38585,11 +38501,11 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   m_Material: {fileID: 2100000, guid: 85c0a2b97bd89294e8b4083045642dce, type: 2}
   m_DrawDistance: 250
-  m_FadeScale: 0.9
+  m_FadeScale: 1
   m_StartAngleFade: 180
   m_EndAngleFade: 180
   m_UVScale: {x: 1, y: 1}
-  m_UVBias: {x: 0, y: 0}
+  m_UVBias: {x: 0, y: 0.2}
   m_DecalLayerMask: 1
   m_ScaleMode: 0
   m_Offset: {x: 0, y: 0, z: 0.5}
@@ -38753,11 +38669,11 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   m_Material: {fileID: 2100000, guid: 85c0a2b97bd89294e8b4083045642dce, type: 2}
   m_DrawDistance: 250
-  m_FadeScale: 0.9
+  m_FadeScale: 1
   m_StartAngleFade: 180
   m_EndAngleFade: 180
   m_UVScale: {x: 1, y: 1}
-  m_UVBias: {x: 0, y: 0}
+  m_UVBias: {x: 0, y: 0.2}
   m_DecalLayerMask: 1
   m_ScaleMode: 0
   m_Offset: {x: 0, y: 0, z: 0.5}
@@ -43326,6 +43242,66 @@ PrefabInstance:
       insertIndex: -1
       addedObject: {fileID: 44745427}
   m_SourcePrefab: {fileID: 100100000, guid: a949827ceeae0224f908d0b3c397201e, type: 3}
+--- !u!1001 &1914527537
+PrefabInstance:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Modification:
+    serializedVersion: 3
+    m_TransformParent: {fileID: 0}
+    m_Modifications:
+    - target: {fileID: 6150944285905371191, guid: a949827ceeae0224f908d0b3c397201e, type: 3}
+      propertyPath: m_LocalPosition.x
+      value: 85.2
+      objectReference: {fileID: 0}
+    - target: {fileID: 6150944285905371191, guid: a949827ceeae0224f908d0b3c397201e, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: -0.019995213
+      objectReference: {fileID: 0}
+    - target: {fileID: 6150944285905371191, guid: a949827ceeae0224f908d0b3c397201e, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: -9.3
+      objectReference: {fileID: 0}
+    - target: {fileID: 6150944285905371191, guid: a949827ceeae0224f908d0b3c397201e, type: 3}
+      propertyPath: m_LocalRotation.w
+      value: 0.7071068
+      objectReference: {fileID: 0}
+    - target: {fileID: 6150944285905371191, guid: a949827ceeae0224f908d0b3c397201e, type: 3}
+      propertyPath: m_LocalRotation.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 6150944285905371191, guid: a949827ceeae0224f908d0b3c397201e, type: 3}
+      propertyPath: m_LocalRotation.y
+      value: 0.7071068
+      objectReference: {fileID: 0}
+    - target: {fileID: 6150944285905371191, guid: a949827ceeae0224f908d0b3c397201e, type: 3}
+      propertyPath: m_LocalRotation.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 6150944285905371191, guid: a949827ceeae0224f908d0b3c397201e, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 6150944285905371191, guid: a949827ceeae0224f908d0b3c397201e, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.y
+      value: 90
+      objectReference: {fileID: 0}
+    - target: {fileID: 6150944285905371191, guid: a949827ceeae0224f908d0b3c397201e, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 6779988445313604237, guid: a949827ceeae0224f908d0b3c397201e, type: 3}
+      propertyPath: m_Name
+      value: 594 Bloor St E (version 2.0) (1)
+      objectReference: {fileID: 0}
+    m_RemovedComponents: []
+    m_RemovedGameObjects: []
+    m_AddedGameObjects: []
+    m_AddedComponents:
+    - targetCorrespondingSourceObject: {fileID: 4898798253176580536, guid: a949827ceeae0224f908d0b3c397201e, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 1451227132}
+  m_SourcePrefab: {fileID: 100100000, guid: a949827ceeae0224f908d0b3c397201e, type: 3}
 --- !u!1 &1915047178
 GameObject:
   m_ObjectHideFlags: 0
@@ -45793,11 +45769,11 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   m_Material: {fileID: 2100000, guid: 85c0a2b97bd89294e8b4083045642dce, type: 2}
   m_DrawDistance: 250
-  m_FadeScale: 0.9
+  m_FadeScale: 1
   m_StartAngleFade: 180
   m_EndAngleFade: 180
   m_UVScale: {x: 1, y: 1}
-  m_UVBias: {x: 0, y: 0}
+  m_UVBias: {x: 0, y: 0.2}
   m_DecalLayerMask: 1
   m_ScaleMode: 0
   m_Offset: {x: 0, y: 0, z: 0.5}
@@ -46331,11 +46307,11 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   m_Material: {fileID: 2100000, guid: 85c0a2b97bd89294e8b4083045642dce, type: 2}
   m_DrawDistance: 250
-  m_FadeScale: 0.9
+  m_FadeScale: 1
   m_StartAngleFade: 180
   m_EndAngleFade: 180
   m_UVScale: {x: 1, y: 1}
-  m_UVBias: {x: 0, y: 0}
+  m_UVBias: {x: 0, y: 0.2}
   m_DecalLayerMask: 1
   m_ScaleMode: 0
   m_Offset: {x: 0, y: 0, z: 0.5}
@@ -48144,11 +48120,11 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   m_Material: {fileID: 2100000, guid: 85c0a2b97bd89294e8b4083045642dce, type: 2}
   m_DrawDistance: 250
-  m_FadeScale: 0.9
+  m_FadeScale: 1
   m_StartAngleFade: 180
   m_EndAngleFade: 180
   m_UVScale: {x: 1, y: 1}
-  m_UVBias: {x: 0, y: 0}
+  m_UVBias: {x: 0, y: 0.2}
   m_DecalLayerMask: 1
   m_ScaleMode: 0
   m_Offset: {x: 0, y: 0, z: 0.5}
@@ -49229,6 +49205,7 @@ SceneRoots:
   - {fileID: 181020287}
   - {fileID: 1196798618}
   - {fileID: 1914453223}
+  - {fileID: 1914527537}
   - {fileID: 961023838}
   - {fileID: 1149459527}
   - {fileID: 3055926}
@@ -49311,7 +49288,6 @@ SceneRoots:
   - {fileID: 1954903715}
   - {fileID: 1835553571}
   - {fileID: 10158530}
-  - {fileID: 1245513115}
   - {fileID: 55792881}
   - {fileID: 343882814}
   - {fileID: 1915160943}

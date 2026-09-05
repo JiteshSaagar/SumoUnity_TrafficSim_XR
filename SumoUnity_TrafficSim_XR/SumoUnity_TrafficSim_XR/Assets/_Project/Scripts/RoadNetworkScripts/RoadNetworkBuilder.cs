@@ -9,7 +9,6 @@ using System.IO;
 using System.Xml.Serialization;
 using UnityEditor;
 using UnityEngine;
-using UnityEngine.Rendering.Universal;
 using NetFile;
 
 public class RoadNetworkBuilder : MonoBehaviour
@@ -29,14 +28,64 @@ public class RoadNetworkBuilder : MonoBehaviour
         if (Singleton == this) Singleton = null;
     }
 
+    /// <summary>
+    /// Mirrors the manager's grass settings onto the generated field, so tuning
+    /// grass never means regenerating the whole road network. Fires on inspector
+    /// edits in edit mode and in play mode alike.
+    /// </summary>
+    private void OnValidate()
+    {
+        if (grassField == null) grassField = GetComponentInChildren<GrassField>(true);
+        if (grassField == null) return;
+
+        GrassSettings snapshot = grassSettings;
+        UnityEditor.EditorApplication.delayCall += () =>
+        {
+            // Deferred: OnValidate may not create or destroy objects, and
+            // applying settings rebuilds the grass cell GameObjects.
+            if (this == null || grassField == null) return;
+            grassField.ApplySettings(snapshot);
+        };
+    }
+
     [Header("Materials (Road, Junction, Decals)")]
     public Material roadSurfaceMaterial;
     public Material junctionSurfaceMaterial;
+    [Tooltip("Legacy URP decal material. Only used as a fallback for zebra crossings; " +
+             "lane lines are meshes now and use laneMarkingMaterial instead.")]
     public Material roadMarkingMaterial;
+
+    [Header("Lane Markings (mesh strips)")]
+    [Tooltip("Must be an opaque surface material, NOT a URP decal material. " +
+             "Leave empty to auto-load Assets/_Project/Materials/Mat_LaneMarking.mat.")]
+    public Material laneMarkingMaterial;
+    [Tooltip("Painted width of a lane line, in metres.")]
+    public float laneMarkingWidth = LaneMarkingMesh.DefaultWidth;
+    // Dash length and gap now live on the marking material, because the dash
+    // pattern is drawn by the shader rather than cut into the geometry.
+
+    private const string laneMarkingMaterialPath = "Assets/_Project/Materials/Mat_LaneMarking.mat";
 
     // ★ NEW: Zebra Crossing Support
     [Header("Pedestrian Crossings")]
     public Material zebraCrossingMaterial;
+
+    [Header("Ground Texturing")]
+    [Tooltip("Metres of world space per texture tile on terrain and roadside " +
+             "polygons. Smaller = sharper ground. Materials using this should " +
+             "have their own tiling left at 1,1.")]
+    public float polygonMetresPerTile = 4f;
+
+    [Header("Grass")]
+    [Tooltip("Every grass parameter lives here. Edits apply immediately to the " +
+             "generated GrassField - no road rebuild needed - and work in play " +
+             "mode too.")]
+    public GrassSettings grassSettings = new GrassSettings();
+
+    // Kept so live edits can reach the field without hunting for it each time.
+    [SerializeField, HideInInspector] private GrassField grassField;
+
+    private const string grassMaterialPath = "Assets/_Project/Materials/Mat_Grass.mat";
 
     [Header("Polygon Types (Wood/Terrain/Roadside/Residential)")]
     public Material polygonWoodMaterial;
@@ -70,6 +119,11 @@ public class RoadNetworkBuilder : MonoBehaviour
     private readonly Dictionary<string, float> laneWidthMap = new();
     private readonly List<Vector2[]> _junctionPolys2D = new();
 
+    // Where grass may grow, and what it must keep off.
+    private readonly List<GrassPolygon> _terrainPolys2D = new();
+    private readonly List<GrassPolygon> _grassExclusions = new();
+    private float _terrainSurfaceY;
+
     public void LoadSumoXmlFiles(string sumoFilesFolder)
     {
         if (roadNetworkRoot != null)
@@ -84,6 +138,8 @@ public class RoadNetworkBuilder : MonoBehaviour
         polygonShapes?.Clear();
         crossingRecords?.Clear();
         _junctionPolys2D.Clear();
+        _terrainPolys2D.Clear();
+        _grassExclusions.Clear();
 
         sumoXmlFolderPath = sumoFilesFolder;
 
@@ -261,6 +317,12 @@ public class RoadNetworkBuilder : MonoBehaviour
 
     public void GenerateRoadsAndJunctions()
     {
+        // Junction outlines must exist before the lane pass, which clips lane
+        // paint against them. They used to be collected in the junction loop
+        // further down, i.e. after the markings had already been placed, so the
+        // clip always tested an empty list and paint ran through intersections.
+        CollectJunctionPolygons();
+
         // lanes
         int laneCounter = 0;
         foreach (var edgeData in edgeRecords.Values)
@@ -284,12 +346,20 @@ public class RoadNetworkBuilder : MonoBehaviour
                 mf.sharedMesh = laneMesh;
                 mr.sharedMaterial = roadSurfaceMaterial ?? GetFallbackMaterial();
 
-                SpawnMarkingDecals(ExtractLeftSideVertices(laneMesh), "LaneMarking_Right", laneObj.transform);
-                SpawnMarkingDecals(ExtractRightSideVertices(laneMesh), "LaneMarking_Left", laneObj.transform);
+                _grassExclusions.Add(new GrassPolygon(BuildLaneFootprint(laneMesh)));
 
-                var ctrl = laneObj.AddComponent<LaneSegmentDecalController>();
-                ctrl.solidDepth = 3f;
-                ctrl.brokenDepth = 1.5f;
+                var ctrl = laneObj.AddComponent<LaneMarkingController>();
+                ctrl.markingMaterial = ResolveLaneMarkingMaterial();
+                ctrl.markingWidth = laneMarkingWidth;
+
+                // Names stay swapped to match the original decal naming, so the
+                // brokenLeft / brokenRight inspector toggles keep their meaning.
+                ctrl.rightSpans = LaneMarkingMesh.ClipToOutside(
+                    ExtractLeftSideVertices(laneMesh), IsInsideAnyJunction);
+                ctrl.leftSpans = LaneMarkingMesh.ClipToOutside(
+                    ExtractRightSideVertices(laneMesh), IsInsideAnyJunction);
+
+                ctrl.RebuildAll();
             }
         }
 
@@ -305,8 +375,6 @@ public class RoadNetworkBuilder : MonoBehaviour
                 double[] xy = j.shapePoints[i];
                 verts2D[i] = new Vector2((float)(xy[0] - originX), (float)(xy[1] - originY));
             }
-
-            _junctionPolys2D.Add((Vector2[])verts2D.Clone());
 
             MeshTriangulator triangulator = new MeshTriangulator(verts2D);
             int[] triIndices = triangulator.GenerateIndices();
@@ -367,9 +435,125 @@ public class RoadNetworkBuilder : MonoBehaviour
             cMf.mesh = crossingMesh;
 
             cMr.material = zebraCrossingMaterial ?? roadMarkingMaterial ?? GetFallbackMaterial();
+
+            _grassExclusions.Add(new GrassPolygon(BuildLaneFootprint(crossingMesh)));
         }
 
         SetLayerRecursively(roadNetworkRoot, groundLayer);
+
+        CreateGrassField();
+    }
+
+    /// <summary>
+    /// Caches every non-internal junction outline in Unity XZ space, for the
+    /// point-in-polygon test that keeps lane paint out of intersections.
+    /// </summary>
+    private void CollectJunctionPolygons()
+    {
+        _junctionPolys2D.Clear();
+        if (junctionRecords == null) return;
+
+        foreach (RoadJunctionData j in junctionRecords.Values)
+        {
+            if (j.shapePoints.Count < 3) continue;
+
+            var poly = new Vector2[j.shapePoints.Count];
+            for (int i = 0; i < j.shapePoints.Count; i++)
+            {
+                double[] xy = j.shapePoints[i];
+                poly[i] = new Vector2((float)(xy[0] - originX), (float)(xy[1] - originY));
+            }
+            _junctionPolys2D.Add(poly);
+        }
+    }
+
+    /// <summary>
+    /// Lane paint renders through a normal MeshRenderer, so it needs an opaque
+    /// surface material. roadMarkingMaterial is a URP *decal* material and
+    /// would draw nothing here, hence the separate slot and asset fallback.
+    /// </summary>
+    private Material ResolveLaneMarkingMaterial()
+    {
+        if (laneMarkingMaterial != null) return laneMarkingMaterial;
+
+        laneMarkingMaterial = AssetDatabase.LoadAssetAtPath<Material>(laneMarkingMaterialPath);
+        if (laneMarkingMaterial != null) return laneMarkingMaterial;
+
+        Shader shader = Shader.Find("Sumo2Unity/Road Marking");
+        if (shader != null)
+        {
+            laneMarkingMaterial = new Material(shader) { name = "LaneMarking (runtime)" };
+            return laneMarkingMaterial;
+        }
+
+        Debug.LogWarning(
+            $"Lane marking material not found at {laneMarkingMaterialPath} and shader " +
+            "\"Sumo2Unity/Road Marking\" is missing. Falling back to Standard; " +
+            "expect Z-fighting against the road surface.");
+        return GetFallbackMaterial();
+    }
+
+    /// <summary>
+    /// Closed outline of a lane quad strip: the left boundary out, the right
+    /// boundary back. Used to keep grass off the road.
+    /// </summary>
+    private Vector2[] BuildLaneFootprint(Mesh laneMesh)
+    {
+        Vector3[] left = ExtractLeftSideVertices(laneMesh);
+        Vector3[] right = ExtractRightSideVertices(laneMesh);
+
+        var ring = new Vector2[left.Length + right.Length];
+        for (int i = 0; i < left.Length; i++)
+            ring[i] = new Vector2(left[i].x, left[i].z);
+        for (int i = 0; i < right.Length; i++)
+            ring[left.Length + i] = new Vector2(right[right.Length - 1 - i].x, right[right.Length - 1 - i].z);
+
+        return ring;
+    }
+
+    /// <summary>
+    /// Attaches the grass field. Blades are generated around the camera at
+    /// runtime rather than baked, because Scenario2's terrain alone is roughly
+    /// 813,000 m2 and would be tens of millions of blades.
+    /// </summary>
+    private void CreateGrassField()
+    {
+        if (!grassSettings.enabled || _terrainPolys2D.Count == 0) return;
+
+        var go = new GameObject("GrassField");
+        go.transform.SetParent(roadNetworkRoot.transform, false);
+
+        var field = go.AddComponent<GrassField>();
+        grassSettings.material = ResolveGrassMaterial();
+        field.settings = grassSettings.Clone();
+        field.terrainY = _terrainSurfaceY;
+        grassField = field;
+        field.terrainPolygons = new List<GrassPolygon>(_terrainPolys2D);
+
+        var exclusions = new List<GrassPolygon>(_grassExclusions);
+        foreach (Vector2[] poly in _junctionPolys2D)
+            exclusions.Add(new GrassPolygon((Vector2[])poly.Clone()));
+        field.exclusionPolygons = exclusions;
+
+        field.Rebuild();
+
+        Debug.Log($"GrassField: {field.terrainPolygons.Count} terrain polygon(s), " +
+                  $"{exclusions.Count} exclusion polygon(s).");
+    }
+
+    private Material ResolveGrassMaterial()
+    {
+        if (grassSettings.material != null) return grassSettings.material;
+
+        Material found = AssetDatabase.LoadAssetAtPath<Material>(grassMaterialPath);
+        if (found != null) return found;
+
+        Shader shader = Shader.Find("Sumo2Unity/Grass");
+        if (shader != null) return new Material(shader) { name = "Grass (runtime)" };
+
+        Debug.LogWarning($"Grass material not found at {grassMaterialPath} and shader " +
+                         "\"Sumo2Unity/Grass\" is missing; grass will not render.");
+        return null;
     }
 
     private static void SetLayerRecursively(GameObject obj, int layer)
@@ -413,12 +597,15 @@ public class RoadNetworkBuilder : MonoBehaviour
         }
         polyMesh.RecalculateBounds();
 
-        Bounds mBounds = polyMesh.bounds;
+        // World-space UVs in tile units. Normalising 0..1 over the polygon
+        // bounds stretched one texture tile across the whole terrain: 15.7 m per
+        // tile in Scenario1 and 87 m in Scenario2, which is why the ground read
+        // as blurry and smeared. Metres-per-tile keeps texel density constant
+        // no matter how large the polygon is.
+        float tile = Mathf.Max(polygonMetresPerTile, 0.01f);
         var uvs = new Vector2[vertices3D.Length];
         for (int i = 0; i < vertices3D.Length; i++)
-            uvs[i] = new Vector2(
-                (vertices3D[i].x - mBounds.min.x) / mBounds.size.x,
-                (vertices3D[i].z - mBounds.min.z) / mBounds.size.z);
+            uvs[i] = new Vector2(vertices3D[i].x / tile, vertices3D[i].z / tile);
         polyMesh.uv = uvs;
 
         GameObject polyGO = new GameObject($"Shape_{polygonId}");
@@ -426,7 +613,11 @@ public class RoadNetworkBuilder : MonoBehaviour
         if (groundLayer >= 0) polyGO.layer = groundLayer;
 
         if (!string.IsNullOrEmpty(polygonType) && polygonType.ToLowerInvariant().Contains("terrain"))
+        {
             polyGO.transform.localPosition = new Vector3(0f, -0.02f, 0f);
+            _terrainSurfaceY = -0.02f;
+            _terrainPolys2D.Add(new GrassPolygon((Vector2[])vertices2D.Clone()));
+        }
         if (!string.IsNullOrEmpty(polygonType) && polygonType.ToLowerInvariant().Contains("roadside"))
             polyGO.transform.localPosition = new Vector3(0f, -0.01f, 0f);
         if (!string.IsNullOrEmpty(polygonType) && polygonType.ToLowerInvariant().Contains("wood"))
@@ -560,104 +751,6 @@ public class RoadNetworkBuilder : MonoBehaviour
         return pts;
     }
 
-    private struct Span { public float s, e; public Span(float s, float e) { this.s = s; this.e = e; } }
-
-    private void SpawnMarkingDecals(Vector3[] boundaryPts, string name, Transform parent)
-    {
-        if (roadMarkingMaterial == null) return;
-        if (boundaryPts == null || boundaryPts.Length < 2) return;
-
-        const float stepSize = 3f;
-        const float sampleStep = 0.25f;
-        Vector3 baseSize = new Vector3(0.1f, 0.2f, 3f);
-
-        int count = boundaryPts.Length;
-        float[] cum = new float[count];
-        cum[0] = 0f;
-        for (int i = 1; i < count; i++)
-            cum[i] = cum[i - 1] + Vector3.Distance(boundaryPts[i - 1], boundaryPts[i]);
-
-        float total = cum[count - 1];
-
-        var spans = new List<Span>();
-        bool wasOutside = false;
-        float spanStart = 0f;
-
-        for (float d = 0f; d <= total; d += sampleStep)
-        {
-            GetPointOnPolyline(boundaryPts, cum, d, out Vector3 pos, out _);
-            bool inside = IsInsideAnyJunction(pos);
-            if (!inside && !wasOutside)
-            {
-                wasOutside = true;
-                spanStart = d;
-            }
-            else if (inside && wasOutside)
-            {
-                wasOutside = false;
-                spans.Add(new Span(spanStart, d));
-            }
-        }
-        if (wasOutside) spans.Add(new Span(spanStart, total));
-
-        foreach (var sp in spans)
-        {
-            for (float d = sp.s; d <= sp.e; d += stepSize)
-            {
-                GetPointOnPolyline(boundaryPts, cum, d, out Vector3 center, out Vector3 dir);
-
-                float halfLen = baseSize.z * 0.5f;
-
-                float maxBack = Mathf.Min(halfLen, d - sp.s);
-                float maxFwd = Mathf.Min(halfLen, sp.e - d);
-                float length = maxBack + maxFwd;
-                if (length < 0.11f) continue;
-
-                center += dir * (maxFwd - maxBack) * 0.5f;
-                center += Vector3.up * 0.01f;
-
-                GameObject decalObj = new GameObject($"{name}_Decal");
-                decalObj.transform.SetParent(parent != null ? parent : roadNetworkRoot.transform);
-                if (groundLayer >= 0) decalObj.layer = groundLayer;
-                decalObj.transform.position = center;
-                decalObj.transform.rotation = Quaternion.LookRotation(-dir, Vector3.up);
-
-                var proj = decalObj.AddComponent<DecalProjector>();
-                proj.material = roadMarkingMaterial;
-                proj.size = new Vector3(baseSize.x, baseSize.y, length * 2f);
-                proj.drawDistance = 250f;
-            }
-        }
-    }
-
-    private static void GetPointOnPolyline(Vector3[] pts, float[] cum, float dist, out Vector3 pos, out Vector3 dir)
-    {
-        int idx = FindMarkingSegmentIndex(cum, dist);
-        if (idx < 0 || idx >= pts.Length - 1)
-        {
-            pos = pts[pts.Length - 1];
-            dir = Vector3.forward;
-            return;
-        }
-
-        float segStart = cum[idx];
-        float segLen = cum[idx + 1] - segStart;
-        float t = segLen <= Mathf.Epsilon ? 0f : (dist - segStart) / segLen;
-
-        Vector3 p0 = pts[idx];
-        Vector3 p1 = pts[idx + 1];
-        pos = Vector3.Lerp(p0, p1, t);
-        dir = (p1 - p0).normalized;
-    }
-
-    private static int FindMarkingSegmentIndex(float[] cum, float dist)
-    {
-        int n = cum.Length;
-        if (dist > cum[n - 1]) return -1;
-        for (int i = 0; i < n - 1; i++)
-            if (dist <= cum[i + 1]) return i;
-        return -1;
-    }
 
     private bool IsInsideAnyJunction(Vector3 worldPos)
     {
@@ -681,58 +774,6 @@ public class RoadNetworkBuilder : MonoBehaviour
             if (intersect) inside = !inside;
         }
         return inside;
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// LaneSegmentDecalController 
-// ─────────────────────────────────────────────────────────────────────────────
-[ExecuteInEditMode]
-[DisallowMultipleComponent]
-public class LaneSegmentDecalController : MonoBehaviour
-{
-    [Tooltip("Broken Lines in LEFT lane marking (acts on objects named *Right* after swap).")]
-    public bool brokenLeft;
-    [Tooltip("Broken Lines in RIGHT lane marking (acts on objects named *Left* after swap).")]
-    public bool brokenRight;
-
-    [HideInInspector] public float solidDepth = 3f;
-    [HideInInspector] public float brokenDepth = 1.5f;
-
-    private bool _prevBrokenLeft;
-    private bool _prevBrokenRight;
-
-    private void OnValidate()
-    {
-        if (brokenLeft != _prevBrokenLeft)
-        {
-            SetDepthForSide("LaneMarking_Right_Decal", brokenLeft);
-            _prevBrokenLeft = brokenLeft;
-        }
-
-        if (brokenRight != _prevBrokenRight)
-        {
-            SetDepthForSide("LaneMarking_Left_Decal", brokenRight);
-            _prevBrokenRight = brokenRight;
-        }
-    }
-
-    private void SetDepthForSide(string prefix, bool broken)
-    {
-        float targetDepth = broken ? brokenDepth : solidDepth;
-
-        var decals = GetComponentsInChildren<DecalProjector>(true);
-        foreach (var d in decals)
-        {
-            if (!d.name.StartsWith(prefix, StringComparison.Ordinal)) continue;
-            Vector3 s = d.size;
-            if (Math.Abs(s.z - targetDepth) < 0.0001f) continue;
-            s.z = targetDepth;
-            d.size = s;
-#if UNITY_EDITOR
-            EditorUtility.SetDirty(d);
-#endif
-        }
     }
 }
 #endif

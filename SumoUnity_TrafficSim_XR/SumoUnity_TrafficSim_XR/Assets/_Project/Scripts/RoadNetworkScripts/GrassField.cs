@@ -83,7 +83,7 @@ public class GrassSettings
 
     [Header("Placement")]
     [Tooltip("Keep grass this far back from road and junction edges.")]
-    public float roadMargin = 0.25f;
+    public float roadMargin = 0.5f;
 
     [Tooltip("Sink blade roots this far below the terrain surface.")]
     public float rootSink = 0.02f;

@@ -13,6 +13,7 @@ import zmq
 
 from .serializers import (
     build_command_message,
+    build_persons_message,
     build_traffic_lights_message,
     build_vehicles_message,
     parse_unity_message,
@@ -107,6 +108,14 @@ class ZMQBridge:
         if not self.pub_socket or not self.is_running:
             return
         payload = build_vehicles_message(vehicles)
+        self.pub_socket.send_string(payload)
+        self.messages_sent += 1
+
+    def send_persons(self, persons: List[Dict[str, Any]]) -> None:
+        """Publishes pedestrian list to Unity."""
+        if not self.pub_socket or not self.is_running:
+            return
+        payload = build_persons_message(persons)
         self.pub_socket.send_string(payload)
         self.messages_sent += 1
 

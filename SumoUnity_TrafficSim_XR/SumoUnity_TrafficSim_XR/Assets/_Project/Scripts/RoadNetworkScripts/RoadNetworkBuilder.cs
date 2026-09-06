@@ -35,7 +35,7 @@ public class RoadNetworkBuilder : MonoBehaviour
     /// </summary>
     private void OnValidate()
     {
-        if (grassField == null) grassField = GetComponentInChildren<GrassField>(true);
+        if (grassField == null) grassField = FindOwnedGrassField();
         if (grassField == null) return;
 
         GrassSettings snapshot = grassSettings;
@@ -84,6 +84,35 @@ public class RoadNetworkBuilder : MonoBehaviour
 
     // Kept so live edits can reach the field without hunting for it each time.
     [SerializeField, HideInInspector] private GrassField grassField;
+
+    /// <summary>The grass field this manager drives, for editor tooling.</summary>
+    public GrassField GrassFieldRef => grassField;
+
+    /// <summary>
+    /// Finds the generated grass field. Deliberately not
+    /// GetComponentInChildren: the generated field lives under RoadNetworkRoot,
+    /// which is a separate scene root and not a child of this manager, while
+    /// GetComponentInChildren *includes this GameObject* and would latch onto a
+    /// stray GrassField component sitting on the manager itself. That stray
+    /// field has no terrain polygons, so it renders nothing - and once cached,
+    /// every settings push would silently go to it instead of the real grass.
+    /// </summary>
+    private GrassField FindOwnedGrassField()
+    {
+        if (roadNetworkRoot != null)
+        {
+            var owned = roadNetworkRoot.GetComponentInChildren<GrassField>(true);
+            if (owned != null) return owned;
+        }
+
+        foreach (var candidate in FindObjectsByType<GrassField>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+        {
+            // Skip a stray component on this manager; prefer a real generated one.
+            if (candidate.gameObject == gameObject) continue;
+            return candidate;
+        }
+        return null;
+    }
 
     private const string grassMaterialPath = "Assets/_Project/Materials/Mat_Grass.mat";
 

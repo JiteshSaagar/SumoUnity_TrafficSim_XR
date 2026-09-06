@@ -67,6 +67,32 @@ public class SimulationController : MonoBehaviour
     }
 
     [Serializable]
+    public class Person
+    {
+        public string person_id;
+        public double[] position;
+        public double angle;
+        public string type;      // SUMO vType, e.g. "ped_adult"
+        public float speed;      // m/s, drives the walk animation
+        public string road_id;
+        public string state;     // "sidewalk" | "crossing" | "walkingarea" | "internal"
+    }
+
+    [Serializable]
+    private class PersonWrapper
+    {
+        public Person[] persons;
+    }
+
+    [Serializable]
+    public class PedestrianModel
+    {
+        [Tooltip("SUMO vType id, e.g. ped_adult / ped_slow / ped_xr.")]
+        public string sumoPersonType;
+        public GameObject unityPedestrianPrefab;
+    }
+
+    [Serializable]
     public class TrafficLight
     {
         public string junction_id;
@@ -88,6 +114,21 @@ public class SimulationController : MonoBehaviour
 
     [Header("Add Unity Vehicle Prefab (3DModel) according to Sumo Vehicle Type")]
     public List<CarModel> carModelsList = new List<CarModel>();
+
+    [Header("Pedestrians")]
+    [Tooltip("Fallback prefab for any SUMO person whose vType is not mapped " +
+             "below. Leave empty to fall back to a capsule placeholder.")]
+    public GameObject pedestrianPrefab;
+
+    [Tooltip("Add a Unity pedestrian prefab per SUMO person vType.")]
+    public List<PedestrianModel> pedestrianModelsList = new List<PedestrianModel>();
+
+    [Tooltip("Heading offset applied to pedestrians, in degrees. 0 suits a " +
+             "humanoid whose model faces +Z (the Unity and Mixamo convention). " +
+             "Vehicles use -90 because the car models face +X.")]
+    public float pedestrianHeadingOffset = 0f;
+
+    private readonly Dictionary<string, GameObject> personObjects = new Dictionary<string, GameObject>();
 
     private float _lastTlTime = 0f;
     private float tlUpdateInterval = 1f;
@@ -326,6 +367,12 @@ public class SimulationController : MonoBehaviour
                     Destroy(obj);
                     vehicleObjects.Remove(vid);
                 }
+
+                foreach (var kvp in personObjects)
+                {
+                    if (kvp.Value != null) Destroy(kvp.Value);
+                }
+                personObjects.Clear();
             }
 
             return; 
@@ -393,6 +440,10 @@ public class SimulationController : MonoBehaviour
                 }
             }
         }
+        else if (common.type == "persons")
+        {
+            HandlePersonsMessage(message);
+        }
         else if (common.type == "trafficlights")
         {
             var wrapper = JsonUtility.FromJson<TrafficLightsWrapper>(message);
@@ -416,6 +467,93 @@ public class SimulationController : MonoBehaviour
     public void EnqueueOnMainThread(string message)
     {
         EnqueueMainThreadAction(() => HandleMessage(message));
+    }
+
+    /// <summary>
+    /// Spawns, moves and retires SUMO's pedestrians. Mirrors the vehicles branch,
+    /// but keeps a separate dictionary so a person is never fed to
+    /// VehicleController and never collides with the ego-vehicle bookkeeping.
+    /// </summary>
+    private void HandlePersonsMessage(string message)
+    {
+        PersonWrapper wrapper = JsonUtility.FromJson<PersonWrapper>(message);
+        if (wrapper == null || wrapper.persons == null) return;
+
+        HashSet<string> incoming = new HashSet<string>();
+        foreach (var p in wrapper.persons)
+        {
+            if (p != null && !string.IsNullOrEmpty(p.person_id)) incoming.Add(p.person_id);
+        }
+
+        // Retire pedestrians SUMO no longer reports: they either arrived at
+        // their destination or walked outside the subscription radius.
+        var stale = personObjects.Keys.Where(id => !incoming.Contains(id)).ToList();
+        foreach (var id in stale)
+        {
+            if (personObjects[id] != null) Destroy(personObjects[id]);
+            personObjects.Remove(id);
+        }
+
+        foreach (var person in wrapper.persons)
+        {
+            if (person == null || string.IsNullOrEmpty(person.person_id)) continue;
+            if (person.position == null || person.position.Length < 3) continue;
+
+            // The XR tester is driven by the rig itself, not by SUMO echoing our
+            // own position back at us. Without this the human would fight a
+            // puppet standing in the same place (Phase 2).
+            if (isPedestrian && person.person_id == egoVehicleId) continue;
+
+            // SUMO (x, y, z) -> Unity (x, z_up, y), matching the vehicles branch.
+            Vector3 pos = new Vector3(
+                (float)person.position[0],
+                (float)person.position[2],
+                (float)person.position[1]);
+            Quaternion rot = Quaternion.Euler(0f, (float)person.angle + pedestrianHeadingOffset, 0f);
+
+            if (!personObjects.TryGetValue(person.person_id, out GameObject go) || go == null)
+            {
+                go = SpawnPedestrian(person, pos, rot);
+                if (go == null) continue;
+                personObjects[person.person_id] = go;
+            }
+
+            var pc = go.GetComponent<PedestrianController>();
+            if (pc != null) pc.UpdateTarget(pos, rot, person.speed);
+        }
+    }
+
+    private GameObject SpawnPedestrian(Person person, Vector3 pos, Quaternion rot)
+    {
+        GameObject prefab = pedestrianPrefab;
+        foreach (var model in pedestrianModelsList)
+        {
+            if (model != null && model.sumoPersonType == person.type && model.unityPedestrianPrefab != null)
+            {
+                prefab = model.unityPedestrianPrefab;
+                break;
+            }
+        }
+
+        GameObject go;
+        if (prefab != null)
+        {
+            go = Instantiate(prefab, pos, rot);
+        }
+        else
+        {
+            // No humanoid assigned yet: a capsule keeps the whole channel
+            // testable, so the data path can be verified before art exists.
+            go = GameObject.CreatePrimitive(PrimitiveType.Capsule);
+            go.transform.localScale = new Vector3(0.5f, 0.9f, 0.5f);
+            go.transform.SetPositionAndRotation(pos + Vector3.up * 0.9f, rot);
+            Collider capsuleCollider = go.GetComponent<Collider>();
+            if (capsuleCollider != null) Destroy(capsuleCollider);
+        }
+
+        go.name = "ped_" + person.person_id;
+        if (go.GetComponent<PedestrianController>() == null) go.AddComponent<PedestrianController>();
+        return go;
     }
 
     private void ChangeTrafficStatus(string junctionID, string state)

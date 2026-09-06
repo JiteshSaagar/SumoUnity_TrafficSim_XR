@@ -18,6 +18,24 @@ from .sumo_manager import SumoManager
 logger = logging.getLogger("sumo2unity.engine")
 
 
+def classify_person_road(road_id: str) -> str:
+    """
+    Maps a SUMO road id to the surface a pedestrian is standing on.
+
+    Internal edges are prefixed with ':' and suffixed by function: '_c' for a
+    crossing, '_w' for a walking area. Anything else is a normal edge, i.e. the
+    sidewalk lane. Unity uses this to pick an animation and, later, to score
+    crossing analytics without re-deriving it from geometry.
+    """
+    if road_id.startswith(":"):
+        if "_c" in road_id:
+            return "crossing"
+        if "_w" in road_id:
+            return "walkingarea"
+        return "internal"
+    return "sidewalk"
+
+
 class SyncEngine:
     def __init__(
         self,
@@ -177,6 +195,35 @@ class SyncEngine:
             if vehicles_to_send:
                 self.zmq_bridge.send_vehicles(vehicles_to_send)
 
+            # 5b. Extract Pedestrians (SUMO -> Unity)
+            persons_to_send = []
+            all_person_ids = traci.person.getIDList()
+            for pid in all_person_ids:
+                try:
+                    pp = traci.person.getPosition3D(pid)
+                    # Same radius filter as vehicles, so a pedestrian on the far
+                    # side of the city costs nothing.
+                    if ego_pos:
+                        dx = pp[0] - ego_pos[0]
+                        dy = pp[1] - ego_pos[1]
+                        if (dx * dx + dy * dy) > sub_radius_sq:
+                            continue
+
+                    persons_to_send.append({
+                        "person_id": pid,
+                        "position": [round(pp[0], 2), round(pp[1], 2), round(pp[2], 2)],
+                        "angle": round(traci.person.getAngle(pid), 2),
+                        "type": traci.person.getTypeID(pid),
+                        "speed": round(traci.person.getSpeed(pid), 2),
+                        "road_id": traci.person.getRoadID(pid),
+                        "state": classify_person_road(traci.person.getRoadID(pid)),
+                    })
+                except Exception as err:
+                    logger.debug("Error reading person %s: %s", pid, err)
+
+            if persons_to_send:
+                self.zmq_bridge.send_persons(persons_to_send)
+
             # 6. Extract Traffic Lights (periodic update)
             now_wall = time.time()
             if (now_wall - self.last_tl_update) >= self.config.tl_update_interval:
@@ -207,6 +254,8 @@ class SyncEngine:
                     "sim_time": current_sim_time,
                     "active_vehicles": len(vehicles_to_send),
                     "total_sumo_vehicles": len(all_veh_ids),
+                    "active_persons": len(persons_to_send),
+                    "total_sumo_persons": len(all_person_ids),
                     "rtf": current_rtf,
                     "ego_speed": ego_speed,
                     "unity_connected": self.zmq_bridge.is_unity_connected(),

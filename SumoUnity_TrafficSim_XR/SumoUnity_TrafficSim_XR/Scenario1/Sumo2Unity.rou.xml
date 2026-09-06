@@ -1,10 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<!-- generated on 2026-06-14T13:58:23.042940+05:30 by Eclipse SUMO netedit 1.26.0
+<!-- Sumo2Unity / SumoUnity_TrafficSim_XR - Scenario 1 demand
+     Phase 0 (pedestrian layer): pedestrian vType + person flows added.
+     Original file preserved at Scenario1/_backup_pre_phase0/Sumo2Unity.rou.xml
 -->
 
 <routes xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://sumo.dlr.de/xsd/routes_file.xsd">
-    <!-- VTypes -->
+    <!-- Vehicle types -->
     <vType id="301" length="4.68" width="2.32" height="1.47" color="0,0,128"/>
     <vType id="302" length="4.68" width="2.32" height="1.47" color="132,132,132"/>
     <vType id="303" length="4.06" width="1.84" color="66,66,66"/>
@@ -14,11 +16,59 @@
     <vType id="EgoBike" length="1.80" vClass="bicycle" color="16,186,16"/>
     <vType id="EgoCar" length="4.81" width="2.16" color="69,56,56"/>
     <vType id="EgoScooter" length="1.09" vClass="scooter"/>
-    <!-- Vehicles, persons and containers (sorted by depart) -->
+
+    <!-- Pedestrian types.
+         speedDev spreads walking speed so the crowd is not lock-step.
+         ped_xr is reserved for the VR tester injected over TraCI (Phase 2);
+         it is declared here so SUMO knows the type before Unity connects. -->
+    <vType id="ped_adult"  vClass="pedestrian" width="0.55" length="0.35" minGap="0.25"
+           maxSpeed="1.40" speedFactor="1.0" speedDev="0.15" color="255,190,0"/>
+    <vType id="ped_slow"   vClass="pedestrian" width="0.60" length="0.35" minGap="0.30"
+           maxSpeed="0.95" speedFactor="1.0" speedDev="0.10" color="255,120,0"/>
+    <vType id="ped_xr"     vClass="pedestrian" width="0.60" length="0.35" minGap="0.20"
+           maxSpeed="2.50" color="0,255,255"/>
+
+    <!-- Ego vehicle (driving experiments). Unused when the ego is the XR pedestrian. -->
     <trip id="f_0.0" type="EgoCar" depart="0.00" from="E0" to="E4" via="-E1"/>
+
+    <!-- Background traffic -->
     <flow id="f_1" type="301" begin="0.00" end="3600.00" perHour="1800.00" from="-E3" to="-E0.30"/>
     <flow id="f_2" type="301" begin="0.00" end="3600.00" perHour="1800.00" from="-E4" to="E5"/>
-    <personFlow id="pf_0" begin="0.00" end="3600.00" number="20">
-        <personTrip from="E5" to="E8"/>
+
+    <!-- ============================================================
+         PEDESTRIAN DEMAND
+         The ego car's first leg runs along E0 through junction J8,
+         where the zebra crossing (:J8_c0) sits. The crossing flows
+         below are what put pedestrians in front of the driver.
+         ============================================================ -->
+
+    <!-- Cross the zebra at J8, south -> north -->
+    <personFlow id="pf_j8_n" type="ped_adult" begin="0.00" end="3600.00" perHour="180.00" departPos="18.00">
+        <personTrip from="E0" to="-E0.30" arrivalPos="4.00"/>
+    </personFlow>
+
+    <!-- Cross the zebra at J8, north -> south -->
+    <personFlow id="pf_j8_s" type="ped_adult" begin="0.00" end="3600.00" perHour="180.00" departPos="4.00">
+        <personTrip from="-E0.30" to="E0" arrivalPos="18.00"/>
+    </personFlow>
+
+    <!-- A few slower pedestrians on the crossing, to create gap-acceptance pressure -->
+    <personFlow id="pf_j8_slow" type="ped_slow" begin="0.00" end="3600.00" perHour="60.00" departPos="18.00">
+        <personTrip from="E0" to="-E0.30" arrivalPos="4.00"/>
+    </personFlow>
+
+    <!-- Walk ALONG the corridor without crossing, eastbound (J0 -> J8 -> J1) -->
+    <personFlow id="pf_walk_e" type="ped_adult" begin="0.00" end="3600.00" perHour="240.00">
+        <personTrip from="E0" to="E00"/>
+    </personFlow>
+
+    <!-- Walk ALONG the corridor without crossing, westbound (J1 -> J8 -> J0) -->
+    <personFlow id="pf_walk_w" type="ped_adult" begin="0.00" end="3600.00" perHour="240.00">
+        <personTrip from="-E0" to="-E0.30"/>
+    </personFlow>
+
+    <!-- Pedestrian activity around junction J1, away from the ego corridor -->
+    <personFlow id="pf_j1" type="ped_adult" begin="0.00" end="3600.00" perHour="120.00">
+        <personTrip from="E5" to="E4"/>
     </personFlow>
 </routes>

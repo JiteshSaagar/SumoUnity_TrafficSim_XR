@@ -37,6 +37,17 @@ def build_vehicles_message(vehicles_list: List[Dict[str, Any]]) -> str:
     return dumps({"type": "vehicles", "vehicles": vehicles_list})
 
 
+def build_persons_message(persons_list: List[Dict[str, Any]]) -> str:
+    """
+    Builds pedestrian array JSON string compatible with Unity's PersonWrapper:
+    {"type": "persons", "persons": [...]}
+
+    Kept separate from the vehicles message so Unity can spawn pedestrians from
+    a different prefab list and never runs a person through VehicleController.
+    """
+    return dumps({"type": "persons", "persons": persons_list})
+
+
 def build_traffic_lights_message(lights_list: List[Dict[str, Any]]) -> str:
     """
     Builds traffic light array JSON string compatible with Unity's TrafficLightsWrapper:

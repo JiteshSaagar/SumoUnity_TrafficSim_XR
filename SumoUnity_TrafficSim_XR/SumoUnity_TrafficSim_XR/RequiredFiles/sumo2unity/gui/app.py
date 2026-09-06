@@ -59,6 +59,7 @@ class Sumo2UnityApp:
         # Telemetry display variables
         self.stat_sim_time = tk.StringVar(value="0.0 s")
         self.stat_vehicles = tk.StringVar(value="0 in range")
+        self.stat_persons = tk.StringVar(value="0 / 0")
         self.stat_rtf = tk.StringVar(value="1.00x")
         self.stat_speed = tk.StringVar(value="0.0 km/h")
         self.stat_unity_status = tk.StringVar(value="Waiting for Unity...")
@@ -222,11 +223,12 @@ class Sumo2UnityApp:
         telemetry_card = ttk.Frame(main_container, style="Card.TFrame", padding=10)
         telemetry_card.pack(fill="x", pady=(0, 10))
 
-        ttk.Label(telemetry_card, text="Live Co-Simulation Telemetry", style="Header.TLabel").grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 6))
+        ttk.Label(telemetry_card, text="Live Co-Simulation Telemetry", style="Header.TLabel").grid(row=0, column=0, columnspan=5, sticky="w", pady=(0, 6))
 
         metrics = [
             ("SIMULATION TIME", self.stat_sim_time),
             ("ACTIVE VEHICLES", self.stat_vehicles),
+            ("PEDESTRIANS", self.stat_persons),
             ("REAL-TIME FACTOR", self.stat_rtf),
             ("EGO SPEED", self.stat_speed),
         ]
@@ -239,7 +241,7 @@ class Sumo2UnityApp:
             ttk.Label(sub_box, textvariable=var, style="CardVal.TLabel").pack(anchor="w")
 
         status_bar = ttk.Frame(telemetry_card, style="Card.TFrame", padding=(4, 6))
-        status_bar.grid(row=2, column=0, columnspan=4, sticky="ew", pady=(8, 0))
+        status_bar.grid(row=2, column=0, columnspan=5, sticky="ew", pady=(8, 0))
         self.lbl_status = ttk.Label(status_bar, textvariable=self.stat_unity_status, font=("Segoe UI", 9, "bold"), foreground="#eab308", background="#27272a")
         self.lbl_status.pack(side="left")
         ttk.Label(status_bar, text="Status: ", font=("Segoe UI", 9), foreground="#71717a", background="#27272a").pack(side="left")
@@ -285,6 +287,8 @@ class Sumo2UnityApp:
             in_range = data.get('active_vehicles', 0)
             total = data.get('total_sumo_vehicles', 0)
             self.stat_vehicles.set(f"{in_range} / {total}")
+            self.stat_persons.set(
+                f"{data.get('active_persons', 0)} / {data.get('total_sumo_persons', 0)}")
             self.stat_rtf.set(f"{data.get('rtf', 1.0):.2f}x")
             spd_ms = data.get('ego_speed', 0.0)
             self.stat_speed.set(f"{(spd_ms * 3.6):.1f} km/h")

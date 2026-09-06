@@ -181,7 +181,7 @@ python RequiredFiles/Sumo2UnityTool_combined.py --config Scenario1/Sumo2Unity.su
     "command": "START_RECORDING"
   }
   ```
-- **Persons Message (Python -> Unity)** — *planned, see §8*:
+- **Persons Message (Python -> Unity)**:
   ```json
   {
     "type": "persons",
@@ -224,17 +224,18 @@ python RequiredFiles/Sumo2UnityTool_combined.py --config Scenario1/Sumo2Unity.su
 | **SUMO TraCI Core** | ✅ Complete | Robust `SumoManager` supporting `sumo` & `sumo-gui`, auto `SUMO_HOME` detection. |
 | **ZeroMQ Async Bridge** | ✅ Complete | High-throughput non-blocking PUB (5556) and ROUTER (5557) threads. |
 | **Time & Step Pacing** | ✅ Complete | Sub-millisecond precision sleep with `perf_counter` and RTF tracking. |
-| **Multi-Actor Injection** | ✅ Complete | Supports cars, dynamic bikes, scooters, and pedestrians (`moveToXY`). |
+| **Multi-Actor Injection** | ⚠️ Vehicles only | Cars, dynamic bikes and scooters work. The `pedestrian` branch in `actors.py` is dead code — nothing ever creates the SUMO person it needs. See §8.4. |
 | **Modern GUI Dashboard** | ✅ Complete | Dark-themed dashboard with live telemetry cards (RTF, vehicles, ego speed). Window/app title reads `SumoUnity_TrafficSim_XR v2.1` (from `VERSION` in `RequiredFiles/sumo2unity/gui/app.py`). |
 | **CLI / Headless Mode** | ✅ Complete | Full `--headless` mode for automated testing and CI pipelines. |
 | **Unity Road Builder** | ✅ Complete | Reads XML and builds 3D roads, crossings, and terrain in editor mode. |
 | **Lane Markings** | ✅ Complete | Carrier ribbon meshes with analytic per-pixel paint coverage; no sub-pixel dropout, no Z-fighting. Replaced per-dash URP DecalProjectors. See §6. |
 | **XR & VR Integration** | ✅ Complete | XR Origin rig, steering/pedal controls, eye-tracking logger. |
 | **Ground & Grass** | ✅ Complete | World-space ground UVs (constant texel density) + procedural grass generated around the camera. See §7. |
-| **SUMO → Unity Pedestrians** | ❌ Not implemented | `sync_engine` never calls `traci.person.*`; SUMO's pedestrians are invisible to Unity. See §8. |
-| **XR Pedestrian Ego** | ⚠️ Hack in place | XR rig is registered as the *car* trip `f_0.0`, so SUMO shows a car walking. See §8.3. |
+| **SUMO → Unity Pedestrians** | ✅ Complete | Phase 1: `persons` channel end to end, verified over ZMQ. Needs a humanoid prefab or it draws capsules. See §8.9. |
+| **XR Pedestrian Ego** | ⚠️ Hack in place | XR rig is registered as the *car* trip `f_0.0`, so SUMO shows a car walking. Diagnosis §8.4, fix in Phase 2 (§8.6). |
 | **Social Force Model** | ❌ Not implemented | Planned for Unity-side pedestrian agents. See §8.6. |
-| **Sidewalks / Walking Areas (3D)** | ⚠️ Partial | Sidewalk lanes are built as plain asphalt with no curb; SUMO walking areas are not built at all. See §8.4. |
+| **Pedestrian Network (SUMO)** | ✅ Complete | Phase 0: sidewalks on all 19 edges, 14 crossings, 20 walking areas, 85 peds / 300 s. See §8.8. |
+| **Sidewalks / Walking Areas (3D)** | ⚠️ Partial | SUMO side done (§8.8); Unity still builds sidewalks as flat asphalt with no kerb and no walking areas. Phase 4. |
 | **Experiment Analytics** | ✅ Complete | Unified reporting to `Results/` compatible with `rtf2chart` and `fps2chart`. |
 
 ---
@@ -533,3 +534,689 @@ a mirror: the manager overwrites it whenever you edit there.
   `RoadNetworkRoot` is part of the scene.
 - For Quest, start at `Grass Density` 6 and `Grass View Radius` 24 and measure
   before raising them.
+- **Editing a default in `GrassSettings` does not change an existing scene.**
+  Unity runs a field initialiser only when the component instance is first
+  constructed; after that the values live in `Scenario1.unity` and are restored
+  on every load, so the script defaults are never read again. Symptom: you edit
+  `height = 0.4f` in code, press Play, and still get the old 0.9.
+- **The manager's copy is authoritative, and it wins on every Play.**
+  `RoadNetworkBuilder.OnValidate` pushes `grassSettings` down into the generated
+  `GrassField` on every domain reload, which includes entering Play mode. So
+  resetting the *field* alone does nothing lasting: the manager overwrites it the
+  instant you press Play, and the old values are still there when you stop. Any
+  fix has to change `RoadNetworkBuilder.grassSettings`.
+  Fix: select **Managers**, and in the Road Network Builder inspector press
+  **Reset Grass To Script Defaults**, then **save the scene**. The button keeps
+  the material reference, which a plain component Reset would null - and a null
+  material means no grass at all, with no error to explain it.
+- **The generated `GrassField` is not a child of `Managers`.** It lives at
+  `RoadNetworkRoot / GrassField`, a separate scene root, so `GetComponentInParent`
+  from the field never finds the manager. Editor tooling must search the scene
+  instead; `GrassFieldEditor.FindBuilderFor` does, and warns if it comes up empty.
+- **Beware a stray `GrassField` component on the `Managers` object.** One exists
+  in `Scenario1`. It has no terrain polygons so it renders nothing, but
+  `GetComponentInChildren` *includes the GameObject it is called on*, so the
+  manager could latch onto it and quietly send every grass edit into a dead
+  component. `FindOwnedGrassField` now skips it, and the manager inspector offers
+  a button to delete it.
+- Day to day, tune grass in the **Inspector on the manager**, not in code - that
+  is the authored source of truth.
+
+---
+
+## 8. Pedestrian Simulation & the Social Force Model
+
+This section records what we took from Garrido et al. (2021), what we verified
+ourselves against SUMO 1.26, where this project currently stands, and the plan
+to get from here to a working pedestrian layer.
+
+**Reference paper:** Daniel Garrido, João Jacob, Daniel Castro Silva, Rosaldo
+J. F. Rossetti, *"Pedestrian Simulation in SUMO Through Externally Modelled
+Agents"*, LIACC / FEUP, 2021.
+Their codebase: `github.com/dalugoga/sumo-unity-distributed-pedestrian-simulator`.
+
+### 8.1 Why SUMO's own pedestrian models are not enough
+
+SUMO only gained pedestrians in 2014 — twelve years after its first release —
+and it ships two models, neither built for safety research:
+
+| Model | Behaviour | Verdict |
+|---|---|---|
+| `nonInteracting` | Constant speed, no interaction with anyone, teleports across intersections. | Useless for us. |
+| `striping` (default) | Sidewalks and crossings are split into **lanes**, like a multi-lane road. A pedestrian shifts to an adjacent stripe to pass a slower one or avoid a head-on collision. Enables ped-vehicle interaction. | Efficient, but not human. |
+
+The paper's central criticism of `striping`, and the reason we are building on
+top of it rather than trusting it:
+
+> *"In the real world, pedestrians don't move in lanes like cars do, don't
+> always walk in their designated areas and might attempt to cross the road in
+> places other than the crosswalk, or when the crosswalk signal indicates not
+> to cross. These oversights limit the impact of pedestrian safety research
+> made in SUMO."*
+
+The fix the paper proposes — and the one we are adopting — is **not** to patch
+SUMO's C++ source, but to model pedestrians **externally in Unity** and push
+their positions back into SUMO over TraCI, so SUMO's vehicles still react to
+them.
+
+> **Note — SUMO 1.26 ships JuPedSim.** Our SUMO build reports the `JuPedSim`
+> feature flag, so `--pedestrian.model jupedsim` is available and is a far
+> better in-SUMO model than `striping`. It is worth benchmarking as a baseline,
+> but it does **not** replace the plan below: JuPedSim cannot put a
+> VR-headset-driven human into the crowd, which is the whole point here.
+
+### 8.2 The paper's architecture — and how ours already compares
+
+Garrido et al. use three modules, which map almost exactly onto what we already
+have (§2):
+
+| Paper's module | Our equivalent | Status |
+|---|---|---|
+| SUMO simulation (traffic + `striping` peds) | Same, `Scenario1/` | Done |
+| Python middleware (TraCI to ZeroMQ) | `RequiredFiles/sumo2unity/` | Done |
+| Unity3D (3D view + external ped models) | `Assets/_Project/Scripts/IntegrationScripts/` | Vehicles only |
+
+Two places where **our implementation is already ahead of the paper's**:
+
+- **Transport.** They run a strict request/response loop: Unity is the client,
+  the middleware is the server, and each side blocks waiting for the other. Our
+  bridge is asynchronous — PUB/SUB on 5556 outbound, ROUTER/DEALER on 5557
+  inbound (§4) — so a slow Unity frame cannot stall the SUMO step.
+- **Network build.** They state their Unity scene *"was created by hand that
+  matched the original scene"* and explicitly call automation out of scope. Our
+  `RoadNetworkBuilder` already generates the 3D network from `net.xml`
+  automatically, including zebra crossings.
+
+They also hit the Unity main-thread problem we already solved the same way: ZMQ
+receive runs on a background thread and hands work to the main thread through a
+queue (`SimulationController.mainThreadActions`, a `ConcurrentQueue<Action>`).
+
+### 8.3 Verified against SUMO 1.26 — the paper's biggest workaround is obsolete
+
+The paper's most painful limitation, and the source of its instability, was
+`person.moveToXY`:
+
+> *"while it can in fact move a pedestrian to any spot on the map, other
+> pedestrians and vehicles will not become aware of its presence. This is due to
+> the method not updating the pedestrian position in terms of edge, but only in
+> terms of coordinates."*
+
+Their workaround was to raycast down in Unity to detect the current edge, then
+**delete and re-create the person** in SUMO whenever it changed edge — which
+they report as *"prone to crashes"* and *"seemingly random crashes"* that got
+worse with more pedestrians.
+
+**We tested this directly against our own `Scenario1` on SUMO 1.26 and it no
+longer applies.** Results:
+
+| Test | Result |
+|---|---|
+| `person.moveToXY(..., keepRoute=2)` walked along sidewalk `E0`, then across to `-E0.30` | PASS — `getRoadID()` correctly followed `E0` to `-E0.30`, and `getLaneID()` to `-E0.30_0`. **The edge is remapped automatically.** |
+| Positional fidelity | PASS — the person holds the commanded `(x, y)` to 2 dp. |
+| Person parked **on the zebra crossing** `:J8_c0`, vehicle approaching on `E0` | PASS — `getRoadID()` became `:J8_c0`, and vehicle `f_0.0` **braked from 6.28 m/s to a full stop** at x = -34.3 and held. Vehicle-pedestrian interaction works. |
+| Person parked **mid-carriageway** (jaywalking, lane `E0_1`) | FAIL — vehicles drive straight through. No reaction, no collision registered. |
+
+**What this means for us:**
+
+1. We do **not** need the delete-and-re-add hack, and we do **not** inherit the
+   paper's crash bug. Straight `moveToXY` with `keepRoute=2` is enough.
+2. We do **not** need Unity-side downward raycasting purely to resolve the SUMO
+   edge — SUMO resolves it. (A raycast may still be wanted for *surface type*,
+   e.g. "am I on the road or the sidewalk", for the social-force wall logic.)
+3. **The jaywalking gap is real and still needs the paper's other fix**: to
+   have vehicles see a pedestrian outside a crossing, the carriageway lanes must
+   permit pedestrians (`allow` must include `pedestrian`). Without it a jaywalk
+   study is meaningless because cars ignore the pedestrian entirely.
+
+> Test scripts used for the above were run from a scratch directory and are not
+> committed. Re-verify if the SUMO version changes.
+
+### 8.4 Where this project actually stands today
+
+An audit of the current code against the pedestrian goal:
+
+**Backend (`RequiredFiles/sumo2unity/`)**
+- MISSING: `core/sync_engine.py` only ever reads `traci.vehicle.getIDList()`.
+  **There is no `traci.person` call anywhere in the outbound path**, so SUMO's
+  pedestrians are never sent to Unity. This is the single biggest gap.
+- PARTIAL: `core/actors.py` *does* have a `pedestrian` branch calling
+  `person.moveToXY`, but it is dead code in practice: it only fires
+  `if actor_id in active_person_ids`, and nothing ever creates that person in
+  SUMO. There is no `traci.person.add()` call in the codebase.
+- MISSING: `network/serializers.py` has no persons message builder.
+
+**Unity (`Assets/_Project/Scripts/`)**
+- PARTIAL: `SimulationController.cs` has an `isPedestrian` flag that flips the
+  outbound `type` field to `"pedestrian"` — but `egoVehicleId` is still
+  `f_0.0`, which is a `<trip type="EgoCar">` in the route file. **This is the
+  known hack**: the XR rig drives a car object in SUMO while the human walks in
+  Unity. It is why the tester shows up as a car.
+- MISSING: no persons message handler, no pedestrian prefab, no walk animation,
+  no NavMesh, no social-force code.
+- PRESENT: `Assets/prefabs/XR Pedestrian.prefab` exists (XRI Origin rig with
+  smooth locomotion) and is the right starting point for the human tester.
+
+**3D network (`RoadNetworkBuilder.cs`)**
+- PRESENT: zebra crossings are parsed (`//edge[@function='crossing']`) and built.
+- MISSING: `RoadLaneData` carries no `allow`/`disallow` field, so a sidewalk
+  lane is built as plain asphalt, at road height, with no curb and no way for
+  other code to ask "is this walkable?".
+- MISSING: walking areas (`function="walkingarea"`) are not built at all — 9
+  exist in `Scenario1`.
+
+**Scenario network (`Scenario1/`)** — measured *before* Phase 0:
+- Only **1 crossing** in the entire network (`:J8_c0`, at junction J8).
+- Sidewalks existed on **only 4 of 19 edges** (`E0`, `-E0`, `-E0.30`, `E00` —
+  all width 2.00 m, all on the J8 corridor). `E5` and `E8` had **no sidewalk
+  lanes at all**.
+- **No traffic lights anywhere.** All 8 junctions are `type="priority"`; the
+  network contains zero `<tlLogic>` blocks. The traffic-light plumbing in
+  `SimulationController.ChangeTrafficStatus` is therefore inert in Scenario1,
+  and pedestrian crossings here are **unsignalised** — vehicles yield by
+  priority rule, not by phase.
+- The route file declared `<personFlow id="pf_0" number="20">` from `E5` to
+  `E8` — but because those edges had no sidewalks, and because 20 persons
+  spread over 3600 s is one every 180 s, **a 300 s run spawned only 2
+  pedestrians, and they never left `E8`**. They never reached the crossing.
+
+So the pedestrian layer was absent end to end, and the scenario network could
+not support it as authored. **Phase 0 (§8.8) has since fixed the network side.**
+
+### 8.5 The Social Force Model
+
+Origin and formulation, as the paper describes it:
+
+- **Reynolds (1987)** — flocking. Each agent is a point with forces
+  (separation, alignment, cohesion) summing to a velocity vector.
+- **Helbing & Molnár (1995)** — adapted to pedestrian crowds with three social
+  forces:
+  1. **Desire** — pull toward the goal; a vector oriented at the destination.
+  2. **Repulsion** — push away from nearby pedestrians; the sum of repulsion
+     vectors from neighbours.
+  3. **Attraction** — optional pull toward points of interest (a shop window, a
+     companion, a street performer).
+
+Each step, the forces sum to a movement vector that is applied to the agent.
+
+**Implementation notes worth copying:**
+- The paper's Unity implementation was ported from a NetLogo reference
+  (`github.com/chraibi/SocialForceModel`, credited to Antoine Tordeux) and
+  **omits the attraction force** — desire + repulsion only. That is the right
+  scope for us too; attraction adds tuning burden with no benefit for a
+  road-crossing study.
+- They chose force-based over the more accurate **velocity-based** methods
+  (time-to-collision, Karamouzas et al. 2017) purely on cost: velocity-based
+  *"are more complex to implement and require more computational resources to
+  run in real-time"*. In VR at 90 Hz that argument is even stronger for us.
+- **Wall forces are mandatory, not optional.** Their first test had pedestrians
+  pushed off the sidewalk into the road and out of the network. The fix: add
+  repulsive "walls" along the edges of every walkable surface (sidewalks,
+  walking areas, crossings); each step, an agent finds the closest point on a
+  wall and gains a repulsive force away from it. As a last resort they
+  hard-clamp the agent back inside the walkable polygon.
+- **Known weakness to expect:** the paper reports that at high density,
+  especially around the crossing, *"the age of the model becomes apparent, as
+  some pedestrians are forced to wait for a chance to move forward, or even
+  backtrack"*. Budget for a density cap or a queueing tweak at crossings.
+
+**Their validated scale (our target to beat):** 100 pedestrians spawned
+initially, +5/minute, all simulated in Unity, with SUMO handling only cars —
+running acceptably on an i7-8750H / RTX 2060 / 16 GB with an Oculus Rift. Our
+target hardware is comparable, so 100 concurrent agents is a realistic goal.
+
+### 8.6 Implementation plan
+
+Six phases, ordered so each one is independently testable. Phases 1-3 deliver
+the user-visible goal (NPC pedestrians walking and crossing, plus a real XR
+pedestrian); 4-6 are quality and rigour.
+
+---
+
+#### Phase 0 — Fix the scenario network ✅ **DONE** — see §8.8
+
+Regenerated `Scenario1` with full pedestrian infrastructure and rewrote the
+pedestrian demand. Results, exact commands and the Unity follow-up step are
+recorded in §8.8.
+
+---
+
+#### Phase 1 — SUMO to Unity pedestrian channel ✅ **DONE** — see §8.9
+
+Make SUMO's existing pedestrians visible in Unity. Pure addition; touches no
+vehicle code.
+
+*Backend:*
+- `network/serializers.py`: add `build_persons_message(persons_list)` emitting
+  `{"type": "persons", "persons": [...]}` (schema in §4).
+- `network/zmq_bridge.py`: add `send_persons()` alongside `send_vehicles()`.
+- `core/sync_engine.py`: in `_run_loop`, after the vehicle extraction block, add
+  a person extraction block — iterate `traci.person.getIDList()`, apply the same
+  `subscribe_radius` filter against `ego_pos`, and read `getPosition3D`,
+  `getAngle`, `getSpeed`, `getTypeID`, `getRoadID`.
+  - Derive a `state` field from `getRoadID()`: a road id starting with `:` and
+    containing `_c` is a crossing, `_w` a walking area, otherwise sidewalk.
+    Unity uses this to pick the animation and, later, to colour crossing
+    analytics.
+- Add `person_count` to the `on_step_callback` dict so the GUI telemetry row can
+  show it.
+
+*Unity:*
+- `SimulationController.cs`: add a `[Serializable] Person` class and
+  `PersonWrapper`, then a `common.type == "persons"` branch in `HandleMessage`,
+  mirroring the vehicles branch: spawn on first sight, update on subsequent
+  frames, destroy when an id drops out of the incoming set.
+- Add a `PedestrianController.cs` — the pedestrian analogue of
+  `VehicleController.cs`, but **simpler**: pedestrians need no rigidbody
+  physics, no angular-velocity blending, no residual spin. Lerp position, slerp
+  rotation, and drive an `Animator` float from `speed` to blend idle to walk.
+- Add a `pedestrianPrefab` field plus a `List<PedestrianModel>` type-to-prefab
+  map, matching the existing `carModelsList` pattern. **A humanoid pedestrian
+  model and walk animation must be sourced — the project has none today.**
+
+**Done when:** pressing Play shows SUMO's `pf_*` pedestrians walking the
+sidewalks in Unity, and stopping at the crossing when the light is against them.
+
+---
+
+#### Phase 2 — Make the XR tester a real SUMO pedestrian *(removes the car hack)*
+
+This is the fix for the bug described in §8.4.
+
+*Backend:*
+- `core/actors.py` — add person lifecycle, the piece that is missing entirely:
+  - On first sight of an actor with `actor_type == "pedestrian"` whose id is not
+    in `traci.person.getIDList()`, call
+    `traci.person.add(pid, edge, pos, typeID="DEFAULT_PEDTYPE")` followed by
+    `traci.person.appendWalkingStage(pid, [edge], arrivalPos)`. **A person with
+    no stage is removed by SUMO immediately** — the walking stage is what keeps
+    it alive; it is a keep-alive, not a route we intend to follow.
+  - Then drive it every step with the existing
+    `person.moveToXY(..., keepRoute=2)` call, which §8.3 confirms is sufficient.
+  - Bootstrap edge: resolve from the XR rig's spawn position via
+    `traci.simulation.convertRoad(x, y, isGeo=False, vClass="pedestrian")`.
+- `config.py`: add `ego_is_pedestrian: bool` and `ego_person_id: str` (default
+  `"xr_ped"`) so the ego id is no longer forced to be a vehicle trip.
+- `gui/app.py`: expose an "Ego is pedestrian" checkbox.
+
+*Unity:*
+- `SimulationController.cs`: when `isPedestrian` is true, stop registering the
+  ego in the vehicle dictionary as a car. Send `egoVehicleId = "xr_ped"` (not
+  `f_0.0`), keep `type = "pedestrian"`.
+- Remove the `EgoCar` trip dependency for pedestrian mode. `f_0.0` should stay
+  in the route file only for driving experiments.
+- Speed: the current `CollectVehicleData` falls back to positional differencing
+  when there is no `Rigidbody` — correct for an XR rig; keep it, but clamp to a
+  sane pedestrian max (~2.5 m/s) so a teleport or recentre does not emit a
+  40 m/s spike into SUMO.
+
+**Done when:** with the headset on, SUMO-GUI shows a **person** triangle, not a
+car, tracking the tester; and stepping onto the zebra crossing makes approaching
+SUMO vehicles brake — which §8.3 confirms works.
+
+---
+
+#### Phase 3 — Social Force Model for Unity-side NPC pedestrians
+
+Now offload pedestrian simulation from SUMO to Unity, per the paper.
+
+- `SocialForceAgent.cs` — per-agent, each step:
+  - **Desire force** toward the next waypoint.
+  - **Repulsion force** = sum over neighbours within a radius. Use a spatial
+    hash or `Physics.OverlapSphereNonAlloc` on a dedicated Pedestrian layer; a
+    naive O(n^2) loop will not hold 100 agents at 90 Hz.
+  - **Wall force** from the nearest point on the walkable-surface boundary
+    (Phase 4 supplies these), plus a hard clamp back inside as the last resort.
+  - Skip attraction, as the paper did.
+- `PedestrianSpawner.cs` — mirrors the paper: an initial count plus a per-minute
+  rate, random origin/destination on the sidewalk graph, despawn on arrival.
+- **Crossing discipline** — the paper does not solve this, and it is what we
+  actually care about. Scenario1 is unsignalised (§8.8), so agents must judge a
+  **gap in traffic** at the kerb rather than read a signal; keep the
+  `_lastTlState` path as a branch for scenarios that do have lights. Expose a
+  `jaywalkProbability` so risk behaviour can be studied deliberately — this is
+  named as future work in the paper's conclusion and is a genuine contribution
+  for us.
+- **Push back to SUMO:** extend the Unity to Python message to carry an array of
+  agents, not just the ego. `ActorManager.update_from_unity` already loops over
+  a list, so the backend largely supports this — but the Unity side currently
+  sends exactly one entry (`new Vehicle[] { egoVehicleData }`).
+- **Hand-off rule:** when Unity simulates pedestrians, SUMO must not also spawn
+  them. Add a config flag that switches between *SUMO-authoritative* (Phase 1)
+  and *Unity-authoritative* (Phase 3) pedestrians, and strip `personFlow` from
+  the route file in the latter.
+
+**Done when:** ~100 Unity-simulated pedestrians walk, avoid each other visibly,
+queue at the crossing, and SUMO vehicles yield to them.
+
+---
+
+#### Phase 4 — Walkable surfaces in 3D
+
+Required by Phase 3's wall forces and by simple visual credibility.
+
+- `RoadNetworkData.RoadLaneData`: add `allow` / `disallow` string fields, parsed
+  in `RoadNetworkBuilder.LoadSumoXmlFiles`.
+- Build sidewalk lanes as **raised** meshes with a kerb (a vertical skirt down
+  to road level) and a sidewalk material — the textures already exist unused at
+  `Assets/_Project/Textures/SidewalkMaterial*.png|jpg`.
+- Build walking-area polygons from `function="walkingarea"` edges, using the
+  `outlineShape` attribute where present (the crossing parser already reads it).
+- Tag every walkable mesh onto a `Walkable` layer and emit its boundary polygon
+  into a shared list for the social-force wall term.
+- Bake a **NavMesh** over walkable surfaces, so agents get global pathfinding
+  and social force only handles local avoidance — this is the standard split and
+  it is cheaper than making social force do both.
+- Add sidewalk and walking-area polygons to `GrassField.exclusionPolygons`, or
+  grass will grow through the pavement (see §7.3).
+
+---
+
+#### Phase 5 — Analytics & validation
+
+- Extend `analytics/metrics_logger.py` and the Unity `vehicle_data_report.txt`
+  writer to log pedestrians: id, position, speed, `road_id`, and crossing
+  entry/exit timestamps.
+- **Safety metrics** the paper never computed, and the real research payload:
+  time-to-collision between pedestrian and vehicle at the crossing, vehicle
+  yield rate, pedestrian wait time at the kerb, and gap acceptance.
+- Feed the existing `EyeGazeTracker` / `EyeDataLogger` into the same timeline so
+  gaze can be correlated with crossing decisions.
+- Validate against the paper's own caveat about VR realism: Bhagavathula et al.
+  (2018) found *"only minor differences"* between real and virtual pedestrian
+  behaviour — cite this when defending the method.
+
+---
+
+### 8.7 Risks and open questions
+
+- **No humanoid asset.** `Assets/_Project/Resources/` has cars, buildings,
+  trees, signs and lamps — no people. A rigged humanoid plus an idle/walk blend
+  tree is a hard prerequisite for Phase 1 and is not yet sourced.
+- **Message-rate cost.** Phase 3 sends ~100 agent poses per step at 10 Hz in
+  *both* directions. The current Unity sender rebuilds one JSON string per frame
+  via `JsonUtility`; at 100 agents this needs measuring, and probably a cached
+  `StringBuilder` or a binary frame.
+- **`JsonUtility` cannot deserialise a bare array**, which is why the existing
+  `JsonHelper` wraps things. Keep the persons message wrapped in an object.
+- **Density degradation is expected**, not a bug — see §8.5. If crossing queues
+  look wrong, compare against the paper's reported behaviour before assuming a
+  defect in our port.
+- **Two pedestrian authorities can conflict.** If both SUMO `personFlow` and the
+  Unity spawner run at once, ids will collide and cars will react to phantom
+  pedestrians. The Phase 3 config flag is not optional.
+- **~~Traffic light phases may not include a pedestrian phase.~~** *Resolved in
+  Phase 0:* Scenario1 has **no traffic lights at all** — all junctions are
+  `type="priority"`. Crossings are unsignalised and vehicles yield by priority
+  rule, which is verified working (§8.8). Unity's traffic-light code is inert
+  in this scenario. Phase 3 crossing discipline must therefore be based on
+  **gap acceptance**, not on `_lastTlState`.
+
+---
+
+### 8.8 Phase 0 — Completed: Scenario 1 pedestrian network
+
+**Status: done.** `Scenario1` now has sidewalks on every edge, crossings at
+every junction, walking areas, and a pedestrian demand that actually uses the
+zebra crossing at J8.
+
+### What changed
+
+Backups of the three original files are in `Scenario1/_backup_pre_phase0/`.
+
+**`Sumo2Unity.net.xml`** — regenerated with:
+
+```
+netconvert -s Scenario1/Sumo2Unity.net.xml \
+  --sidewalks.guess true --sidewalks.guess.max-speed 14.0 \
+  --default.sidewalk-width 2.0 \
+  --crossings.guess true --crossings.guess.speed-threshold 14.0 \
+  --default.crossing-width 4.0 \
+  --walkingareas true \
+  --no-turnarounds true --offset.disable-normalization true \
+  --junctions.corner-detail 5 --junctions.limit-turn-speed 5.50 \
+  --rectangular-lane-cut false --geometry.avoid-overlap false \
+  -o Scenario1/Sumo2Unity.net.xml
+```
+
+The trailing options replicate the settings in `Sumo2Unity.netecfg` so the
+geometry stays as close to the netedit original as possible. **Re-use this exact
+command** if the network is ever regenerated, or the sidewalks will be lost.
+
+| Metric | Before | After |
+|---|---|---|
+| Edges with a sidewalk | 4 of 19 | **19 of 19** |
+| Pedestrian crossings | 1 (`:J8_c0`) | **14** |
+| Walking areas | 9 | **20** |
+| `netOffset` / `convBoundary` | `0,0` / `-76.54,-32.31,72.60,35.13` | **unchanged** |
+
+**`Sumo2Unity.rou.xml`** — added three pedestrian `vType`s (`ped_adult`,
+`ped_slow`, and `ped_xr` reserved for the Phase 2 VR tester) and replaced the
+single ineffective `pf_0` flow with six person flows: three that cross the J8
+zebra, two that walk the corridor without crossing, and one around J1. Total
+pedestrian demand is 1020/hour. Vehicle flows and the `f_0.0` ego trip are
+unchanged.
+
+The crossing flows carry explicit `departPos` / `arrivalPos` values
+(`18.00` / `4.00`). **This matters and should not be removed:** with SUMO's
+default positions, both trip ends land at junction J0, so pedestrians crossed
+at J0 and only 13 ever used the J8 zebra. Anchoring the trip ends near J8 moved
+that to 30 pedestrians and eliminated J0 crossings entirely.
+
+### Verified results (300 s headless run, measured not assumed)
+
+| Check | Before | After |
+|---|---|---|
+| Distinct pedestrians spawned | 2 | **85** |
+| Peak concurrent pedestrians | 0–1 | **18** |
+| Pedestrians using the J8 zebra | 0 | **30** |
+| Pedestrians using any crossing | 0 | **48** |
+| Vehicles yielding at the J8 zebra | n/a | **8 distinct**, stopping 0.9–1.0 m short |
+| Warnings / errors over 600 s | — | **none** |
+| Teleports | — | **0** |
+| Ego route `f_0.0` still valid | yes | **yes** — `E0 → :J8_2 → E00 → … → E4` |
+
+The ego car's route passes directly through the J8 crossing, so a driving
+subject will meet crossing pedestrians without any further scenario work.
+
+### Road alignment is preserved — your scene props are safe
+
+Adding sidewalks normally shifts carriageways sideways, which would leave every
+manually-placed building, tree and street lamp misaligned. Measured worst-case
+lateral shift of the carriageway centreline across all edges: **0.008 m**.
+
+Lane *endpoints* did move — junctions grew or shrank by 2–5 m to make room for
+crossings and walking areas — but the centrelines did not. Buildings, trees and
+grass will still line up after the Unity rebuild.
+
+### ⚠️ Required manual step — rebuild the road network in Unity
+
+The Unity scene still holds the **old** geometry. Until it is rebuilt there are
+no sidewalk or crossing meshes for pedestrians to stand on. In Unity:
+
+1. Open the `Scenario1` scene.
+2. Select the **Managers** GameObject and confirm **Road Network Builder** points
+   at the `Scenario1` folder.
+3. Menu **Sumo2Unity → 1. Create Road Network**.
+4. Let it finish, then **save the scene**.
+
+Expect the rebuild to produce more geometry than before (19 sidewalk lanes and
+14 crossings rather than 4 and 1). Note the known cosmetic limits, which Phase 4
+addresses:
+
+- Sidewalks build as **flat asphalt at road height with no kerb** —
+  `RoadLaneData` still has no `allow`/`disallow` field, so the builder cannot
+  tell a sidewalk from a carriageway.
+- **Walking areas are not built at all.** There will be visible gaps at junction
+  corners where pedestrians appear to walk on nothing.
+- Grass exclusion only covers lanes, junctions and crossings, so blades may
+  poke through the new sidewalks until Phase 4.
+
+Pedestrians will still walk correctly in SUMO regardless — this is a visual gap
+in Unity, not a simulation one.
+
+### Notes and deliberate decisions
+
+- **No traffic lights were added.** Scenario1 has none, and the J8 crossing works
+  unsignalised: vehicles yield by priority rule, which the test above confirms.
+  This also matches the paper's Fig. 6 (a SUMO vehicle waiting for the immersed
+  user). If a signalised crossing is wanted later, regenerate with `--tls.guess
+  --tls.crossing-min.time 6`, but be aware it changes vehicle behaviour
+  network-wide and the Unity traffic-light heads must then match the new
+  programme.
+- **Jaywalking is still not modelled.** Per §8.3, vehicles ignore pedestrians on
+  the carriageway. Enabling it means adding `pedestrian` to the carriageway
+  `allow` lists, which should be done on a **separate scenario copy** because it
+  changes vehicle behaviour everywhere. Deferred to Phase 3, where
+  `jaywalkProbability` lives.
+- `Sumo2Unity.Poly.xml` was not touched; building and terrain polygons are
+  unaffected.
+- Scenario2 was not modified. Applying the same `netconvert` command there is
+  straightforward if that scenario is ever needed for pedestrian work.
+
+---
+
+### 8.9 Phase 1 — Completed: SUMO → Unity pedestrian channel
+
+**Status: code done and verified end to end.** SUMO's pedestrians are now
+published to Unity and spawned there. The only thing missing is art: without a
+humanoid prefab assigned, pedestrians draw as capsules (see the setup steps
+below).
+
+#### Backend changes
+
+| File | Change |
+|---|---|
+| `network/serializers.py` | `build_persons_message()` — emits `{"type":"persons","persons":[…]}`. Kept separate from the vehicles message so Unity never runs a person through `VehicleController`. |
+| `network/zmq_bridge.py` | `send_persons()`, alongside `send_vehicles()`. |
+| `core/sync_engine.py` | New step 5b: iterates `traci.person.getIDList()`, applies the same `subscribe_radius` filter as vehicles, reads position/angle/speed/type/road. Plus `classify_person_road()`. |
+| `gui/app.py` | New **PEDESTRIANS** telemetry card showing `in-radius / total`. |
+
+`classify_person_road()` turns a SUMO road id into the surface the pedestrian is
+standing on, so Unity does not have to re-derive it from geometry:
+
+| Road id | `state` |
+|---|---|
+| `:J8_c0` | `crossing` |
+| `:J8_w0` | `walkingarea` |
+| `E0`, `-E0.30` | `sidewalk` |
+| `:J1_13` | `internal` |
+
+This field is what Phase 3 crossing behaviour and Phase 5 crossing analytics
+will key off, so it is worth keeping accurate.
+
+#### Unity changes
+
+**`PedestrianController.cs`** (new) — the pedestrian analogue of
+`VehicleController`, deliberately much simpler. A car needs a Rigidbody,
+local-axis velocities and angular-velocity blending because its heading and
+travel direction differ. A pedestrian always walks where it faces and never
+needs to collide with anything, because SUMO already resolved that; driving it
+through physics would only fight the incoming positions. It interpolates
+position and heading with `1 - exp(-k·dt)` — frame-rate independent, which
+matters in VR where frame times vary far more than on a flat screen — snaps
+rather than slides when SUMO re-inserts a person, and drives an `Animator`
+float from walking speed.
+
+**`SimulationController.cs`** — added `Person` / `PersonWrapper` /
+`PedestrianModel` types, a `persons` branch in `HandleMessage`, and
+`HandlePersonsMessage` + `SpawnPedestrian`. Pedestrians live in their own
+`personObjects` dictionary, separate from `vehicleObjects`. New inspector
+fields: `pedestrianPrefab`, `pedestrianModelsList`, `pedestrianHeadingOffset`.
+
+Three details worth knowing:
+
+- **Heading offset is 0 for pedestrians, not −90.** Vehicles apply `angle - 90`
+  because the car models face **+X**. A standard humanoid (Unity's and Mixamo's
+  convention) faces **+Z**, and SUMO's angle convention — 0° = north, 90° = east,
+  clockwise — maps straight onto Unity's Y euler. If an imported character faces
+  sideways, correct it with `pedestrianHeadingOffset` rather than rotating the
+  prefab root, which would fight the controller.
+- **The ego pedestrian is skipped.** When `isPedestrian` is true, the person
+  whose id matches `egoVehicleId` is ignored, so the XR tester is never given a
+  SUMO-driven puppet standing inside the headset (Phase 2).
+- **Capsule fallback.** With no prefab assigned, a scaled capsule is spawned and
+  its collider stripped. This made the whole channel testable before any art
+  existed, and is why "it works but they are capsules" is the expected first run.
+
+#### Verified
+
+Ran the real `SyncEngine` against `Scenario1` with a ZeroMQ subscriber standing
+in for Unity:
+
+| Check | Result |
+|---|---|
+| Message types published | `vehicles` ×200, **`persons` ×199** |
+| Distinct pedestrians over the wire | 10 |
+| Surface states observed | `sidewalk` 638, `walkingarea` 383, `crossing` 210 |
+| GUI telemetry | `active_persons=8`, `total_sumo_persons=8` |
+| C# compile (Roslyn, Unity 6000.0.53f1 refs) | **0 errors** |
+
+Sample payload:
+
+```json
+{"person_id":"pf_j1.0","position":[2.02,16.35,0.0],"angle":195.04,
+ "type":"ped_adult","speed":1.19,"road_id":":J1_w0","state":"walkingarea"}
+```
+
+#### ⚠️ Required manual step — assign a pedestrian prefab
+
+Until this is done pedestrians render as capsules. On the **Managers** object,
+under **Simulation Controller → Pedestrians**:
+
+1. Set **Pedestrian Prefab** to a rigged humanoid (the fallback for any vType).
+2. Optionally fill **Pedestrian Models List** to map a SUMO vType to a specific
+   prefab — `ped_adult` and `ped_slow` are the two in use.
+3. Leave **Pedestrian Heading Offset** at 0 unless the character faces sideways.
+
+The prefab needs an `Animator` with a **float parameter named `Speed`** driving
+an idle→walk blend tree. `PedestrianController` checks that the parameter exists
+before writing to it, so a prefab without one still moves correctly — it just
+does not animate, and does not spam the console.
+
+#### Importing a Mixamo character into this URP project
+
+This project renders through **URP** (`Assets/Settings/PC_RPAsset.asset`). A
+Mixamo FBX arrives with its materials and textures as **embedded sub-assets**
+(`materialLocation: InPrefab`, `externalObjects: {}`), and those materials are
+authored for the built-in pipeline. Embedded materials cannot be edited or
+upgraded in place, so the character imports untextured: **magenta** if the
+shader is built-in Standard, **flat grey/white** if the shader resolved to URP
+but no texture bound.
+
+Fix, on the character FBX (not the animation FBX):
+
+1. Select the FBX → Inspector → **Materials** tab.
+2. **Extract Textures…** → the character's own folder. Writes the real PNGs.
+3. **Extract Materials…** → same folder. Writes editable `.mat` files and fills
+   in `externalObjects`.
+4. If the extracted materials show shader **Standard**:
+   **Window → Rendering → Render Pipeline Converter → Built-in to URP →
+   Material Upgrade**. Or set each shader to `Universal Render Pipeline/Lit`.
+5. Bind the maps — URP/Lit slot names differ from Mixamo's file names:
+   **Base Map** ← `*_Diffuse`, **Normal Map** ← `*_Normal`,
+   **Metallic/Specular** ← `*_Specular`.
+6. Select every extracted `*_Normal.png` → **Texture Type: Normal map** → Apply.
+   Without this URP renders the normals as flat colour.
+7. Hair uses `*_Opacity`: on that material enable **Alpha Clipping** (cheaper in
+   VR) or set Surface Type **Transparent**, or the hair renders as a solid slab.
+
+Two layout notes from the first import:
+
+- A folder literally named `Pedestrian.prefab` is not a prefab. Unity shows it
+  as a folder and the real asset ends up at `Pedestrian.prefab/Remy.prefab`.
+  Harmless, but rename the folder to something like `Prefabs`.
+- Pedestrian art does **not** need to live under `Resources/`.
+  `SimulationController` uses the Inspector reference, not `Resources.Load`, so
+  anything under `Resources/` is force-included in every build for no reason -
+  and a Mixamo FBX with embedded textures is ~28 MB.
+
+#### Known limits, deferred by design
+
+- **No ground raycast.** Height comes straight from SUMO's z (0 everywhere here)
+  plus `yOffset`. Fine while sidewalks are flat; once Phase 4 raises them onto
+  kerbs, pedestrians will need to sample the surface.
+- **No pedestrian LOD or culling** beyond the `subscribe_radius` filter. The
+  paper ran 100 agents on comparable hardware, so this should hold, but it is
+  untested in VR here.
+- Pedestrians are **destroyed and respawned** when they leave and re-enter the
+  subscription radius, which resets their animation phase.

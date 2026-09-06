@@ -35,12 +35,12 @@ public class GrassSettings
 
     [Header("Blades")]
     [Tooltip("Blades per square metre. Cost scales linearly with this.")]
-    [Range(1f, 40f)] public float density = 10f;
+    [Range(1f, 40f)] public float density = 7f;
 
     [Tooltip("Average blade height in metres. From a 1.2 m eye height, hiding a " +
              "road 10 m away needs 0.60 m, 20 m away needs 0.90 m, 30 m away " +
              "needs 1.00 m. Drop to ~0.35 for a mown verge instead.")]
-    public float height = 0.9f;
+    public float height = 0.4f;
 
     [Tooltip("Fraction of height randomised per blade.")]
     [Range(0f, 0.8f)] public float heightVariation = 0.35f;
@@ -51,7 +51,7 @@ public class GrassSettings
     [Header("Extent")]
     [Tooltip("Grass is generated only within this distance of the camera. " +
              "Cost scales with the square of this.")]
-    public float viewRadius = 32f;
+    public float viewRadius = 64f;
 
     [Tooltip("Size of one generated cell. Larger means fewer draw calls but " +
              "coarser culling and bigger rebuild hitches.")]
@@ -65,7 +65,7 @@ public class GrassSettings
              "spends the same number of cells on ground you are looking at. " +
              "0 = centred on the camera; 0.5 = half a radius ahead, giving 1.5x " +
              "the forward reach for no extra cost.")]
-    [Range(0f, 0.9f)] public float forwardBias = 0.5f;
+    [Range(0f, 0.9f)] public float forwardBias = 0.7f;
 
     [Tooltip("Seconds for the bias direction to catch up. Without this a quick " +
              "head turn in VR would shift the whole field at once and force every " +

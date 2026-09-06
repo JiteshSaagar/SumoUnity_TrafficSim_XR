@@ -2,8 +2,11 @@
 # ────────────────────────────────────────────────────────────────
 #  Sumo2UnityTool_combined.py
 #  GUI  +  SUMO ⇄ Unity simulation  (one file entry point)
-#  Version : Sumo2Unity v2.1.0
-#  Author  : Ahmad Mohammadi, PhD – York University
+#  Version : SumoUnity_TrafficSim_XR v2.1
+#  Author  : Jitesh Surendra Saagar
+#            Intern under Dr. Anshuman Sharma, IIT BHU
+#  Portfolio: https://jiteshsaagar.me
+#  Based on : SUMO2Unity by Ahmad Mohammadi, PhD - York University
 #  License : MIT
 # ────────────────────────────────────────────────────────────────
 
@@ -21,8 +24,9 @@ from sumo2unity.config import SimulationConfig, find_available_scenarios, find_p
 from sumo2unity.core.sync_engine import SyncEngine
 from sumo2unity.gui.app import launch_gui
 
-VERSION = "Sumo2Unity v2.1.0"
-LINKEDIN_URL = "https://www.linkedin.com/in/ahmadmohammadi1441/"
+VERSION = "SumoUnity_TrafficSim_XR v2.1"
+AUTHOR = "Jitesh Surendra Saagar"
+PORTFOLIO_URL = "https://jiteshsaagar.me"
 
 
 def setup_logging(debug: bool = False) -> None:

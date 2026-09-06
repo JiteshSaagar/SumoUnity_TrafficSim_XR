@@ -1,5 +1,21 @@
 # Sumo2Unity Project Status & Technical Documentation
 
+## 0. Authorship
+
+**Jitesh Surendra Saagar** — Intern under **Dr. Anshuman Sharma, IIT BHU**
+Portfolio: [jiteshsaagar.me](https://jiteshsaagar.me)
+
+Recreated and enhanced the modular Python backend, the procedural road/lane
+marking system, and the grass field.
+
+Built on the open-source **SUMO2Unity** project by Ahmad Mohammadi, PhD —
+York University. Licensed MIT; the upstream credit is retained in the GUI's
+About dialog and source headers as that licence requires. The papers in the
+GUI's *Research Publications* dialog are the upstream project's and are
+unchanged.
+
+---
+
 ## 1. Project Overview
 **Sumo2Unity** is an open-source co-simulation platform bridging **Eclipse SUMO** (Simulation of Urban MObility) with the **Unity 3D Game Engine / XR (VR) Platform**. It enables researchers and developers to run realistic microscopic traffic simulations and visualize them with high-fidelity 3D assets, vehicles, pedestrians, traffic lights, and human-in-the-loop VR driver/cyclist/pedestrian experiments.
 
@@ -165,6 +181,23 @@ python RequiredFiles/Sumo2UnityTool_combined.py --config Scenario1/Sumo2Unity.su
     "command": "START_RECORDING"
   }
   ```
+- **Persons Message (Python -> Unity)** — *planned, see §8*:
+  ```json
+  {
+    "type": "persons",
+    "persons": [
+      {
+        "person_id": "pf_0.3",
+        "position": [-31.30, 9.00, 0.0],
+        "angle": 0.0,
+        "type": "DEFAULT_PEDTYPE",
+        "speed": 1.34,
+        "road_id": ":J8_c0",
+        "state": "crossing"
+      }
+    ]
+  }
+  ```
 - **Ego Vehicle Telemetry (Unity -> Python)**:
   ```json
   {
@@ -192,12 +225,16 @@ python RequiredFiles/Sumo2UnityTool_combined.py --config Scenario1/Sumo2Unity.su
 | **ZeroMQ Async Bridge** | ✅ Complete | High-throughput non-blocking PUB (5556) and ROUTER (5557) threads. |
 | **Time & Step Pacing** | ✅ Complete | Sub-millisecond precision sleep with `perf_counter` and RTF tracking. |
 | **Multi-Actor Injection** | ✅ Complete | Supports cars, dynamic bikes, scooters, and pedestrians (`moveToXY`). |
-| **Modern GUI Dashboard** | ✅ Complete | Dark-themed dashboard with live telemetry cards (RTF, vehicles, ego speed). |
+| **Modern GUI Dashboard** | ✅ Complete | Dark-themed dashboard with live telemetry cards (RTF, vehicles, ego speed). Window/app title reads `SumoUnity_TrafficSim_XR v2.1` (from `VERSION` in `RequiredFiles/sumo2unity/gui/app.py`). |
 | **CLI / Headless Mode** | ✅ Complete | Full `--headless` mode for automated testing and CI pipelines. |
 | **Unity Road Builder** | ✅ Complete | Reads XML and builds 3D roads, crossings, and terrain in editor mode. |
 | **Lane Markings** | ✅ Complete | Carrier ribbon meshes with analytic per-pixel paint coverage; no sub-pixel dropout, no Z-fighting. Replaced per-dash URP DecalProjectors. See §6. |
 | **XR & VR Integration** | ✅ Complete | XR Origin rig, steering/pedal controls, eye-tracking logger. |
 | **Ground & Grass** | ✅ Complete | World-space ground UVs (constant texel density) + procedural grass generated around the camera. See §7. |
+| **SUMO → Unity Pedestrians** | ❌ Not implemented | `sync_engine` never calls `traci.person.*`; SUMO's pedestrians are invisible to Unity. See §8. |
+| **XR Pedestrian Ego** | ⚠️ Hack in place | XR rig is registered as the *car* trip `f_0.0`, so SUMO shows a car walking. See §8.3. |
+| **Social Force Model** | ❌ Not implemented | Planned for Unity-side pedestrian agents. See §8.6. |
+| **Sidewalks / Walking Areas (3D)** | ⚠️ Partial | Sidewalk lanes are built as plain asphalt with no curb; SUMO walking areas are not built at all. See §8.4. |
 | **Experiment Analytics** | ✅ Complete | Unified reporting to `Results/` compatible with `rtf2chart` and `fps2chart`. |
 
 ---

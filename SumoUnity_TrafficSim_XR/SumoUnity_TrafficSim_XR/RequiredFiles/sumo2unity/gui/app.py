@@ -17,8 +17,10 @@ from ..core.sync_engine import SyncEngine
 
 logger = logging.getLogger("sumo2unity.gui")
 
-VERSION = "Sumo2Unity v2.1.0"
-LINKEDIN_URL = "https://www.linkedin.com/in/ahmadmohammadi1441/"
+VERSION = "SumoUnity_TrafficSim_XR v2.1"
+AUTHOR = "Jitesh Surendra Saagar"
+AFFILIATION = "Intern under Dr. Anshuman Sharma, IIT BHU"
+PORTFOLIO_URL = "https://jiteshsaagar.me"
 
 
 class Sumo2UnityApp:
@@ -367,10 +369,13 @@ class Sumo2UnityApp:
 
     def _show_contact(self) -> None:
         info_text = (
-            f"{VERSION}\n"
-            "Author: Ahmad Mohammadi, PhD – York University\n"
+            f"{VERSION}\n\n"
+            f"Author: {AUTHOR}\n"
+            f"{AFFILIATION}\n"
             "Recreated & Enhanced Modular Python Backend\n"
-            f"LinkedIn: {LINKEDIN_URL}\n"
+            f"Portfolio: {PORTFOLIO_URL}\n\n"
+            "Built on the open-source SUMO2Unity project by\n"
+            "Ahmad Mohammadi, PhD - York University\n"
             "License: MIT"
         )
         messagebox.showinfo("About & Contact", info_text)

@@ -55,6 +55,8 @@ class Sumo2UnityApp:
         self.use_gui_var = tk.BooleanVar(value=True)
         self.calc_rtf_var = tk.BooleanVar(value=True)
         self.free_cam_var = tk.BooleanVar(value=False)
+        self.ego_pedestrian_var = tk.BooleanVar(value=False)
+        self.ego_id_var = tk.StringVar(value="f_0.0")
 
         # Telemetry display variables
         self.stat_sim_time = tk.StringVar(value="0.0 s")
@@ -204,6 +206,7 @@ class Sumo2UnityApp:
             ("Lateral Resolution (m):", self.lateral_res_var, 2, 0),
             ("Subscription Radius (m):", self.radius_var, 2, 2),
             ("Zoom (SUMO-GUI):", self.zoom_var, 3, 0),
+            ("Ego ID (vehicle/person):", self.ego_id_var, 3, 2),
         ]
 
         for label_text, var, r, c in params:
@@ -218,6 +221,8 @@ class Sumo2UnityApp:
         ttk.Checkbutton(check_frame, text="Run SUMO with GUI", variable=self.use_gui_var, style="TCheckbutton").pack(side="left", padx=(6, 18))
         ttk.Checkbutton(check_frame, text="Calculate RTF", variable=self.calc_rtf_var, style="TCheckbutton").pack(side="left", padx=18)
         ttk.Checkbutton(check_frame, text="Free camera (no follow ego)", variable=self.free_cam_var, style="TCheckbutton").pack(side="left", padx=18)
+        ttk.Checkbutton(check_frame, text="Ego is XR pedestrian", variable=self.ego_pedestrian_var,
+                        style="TCheckbutton", command=self._on_ego_mode_changed).pack(side="left", padx=18)
 
         # 4. Live Telemetry Dashboard Card
         telemetry_card = ttk.Frame(main_container, style="Card.TFrame", padding=10)
@@ -280,6 +285,19 @@ class Sumo2UnityApp:
         if chosen:
             self.sumo_cfg_var.set(chosen)
 
+    def _on_ego_mode_changed(self) -> None:
+        """
+        Swaps the ego id to a sensible default when the mode is toggled, but
+        only if the field still holds the other mode's default - so a hand-typed
+        id is never silently overwritten.
+        """
+        if self.ego_pedestrian_var.get():
+            if self.ego_id_var.get().strip() in ("", "f_0.0"):
+                self.ego_id_var.set("xr_ped")
+        else:
+            if self.ego_id_var.get().strip() in ("", "xr_ped"):
+                self.ego_id_var.set("f_0.0")
+
     def _telemetry_callback(self, data: dict) -> None:
         """Called from SyncEngine thread on each step; posts update to Tkinter main thread."""
         def update():
@@ -321,6 +339,8 @@ class Sumo2UnityApp:
                 use_gui=self.use_gui_var.get(),
                 calc_rtf=self.calc_rtf_var.get(),
                 free_cam=self.free_cam_var.get(),
+                ego_id=self.ego_id_var.get().strip() or "f_0.0",
+                ego_is_pedestrian=self.ego_pedestrian_var.get(),
                 results_dir=self.results_dir,
             )
         except ValueError:

@@ -18,6 +18,11 @@ class SimulationConfig:
     zoom: float = 150.0
     subscribe_radius: float = 250.0
     ego_id: str = "f_0.0"
+    # When the ego is the VR pedestrian, it must be injected into SUMO as a
+    # person rather than a vehicle. ego_id then names the person, not a trip
+    # from the route file.
+    ego_is_pedestrian: bool = False
+    ego_person_type: str = "ped_xr"
     use_gui: bool = True
     calc_rtf: bool = True
     free_cam: bool = False

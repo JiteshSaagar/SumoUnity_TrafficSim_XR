@@ -58,7 +58,10 @@ class SyncEngine:
             pub_port=config.pub_port,
             router_port=config.router_port,
         )
-        self.actor_manager = ActorManager(primary_ego_id=config.ego_id)
+        self.actor_manager = ActorManager(
+            primary_ego_id=config.ego_id,
+            person_type=config.ego_person_type,
+        )
         self.metrics_logger = MetricsLogger(results_dir=config.results_dir)
 
         self.is_running = False
@@ -146,14 +149,24 @@ class SyncEngine:
             all_veh_ids = traci.vehicle.getIDList()
             vehicles_to_send = []
 
-            # Determine Ego position for radius filtering
+            # Determine Ego position for radius filtering. A pedestrian ego is a
+            # SUMO person, so looking it up in the vehicle list would always miss
+            # and the radius filter would silently fall back to "send everything".
             ego_pos = None
-            if self.config.ego_id in all_veh_ids:
+            if self.config.ego_is_pedestrian:
+                try:
+                    if self.config.ego_id in traci.person.getIDList():
+                        ego_pos = traci.person.getPosition(self.config.ego_id)
+                except Exception:
+                    pass
+            elif self.config.ego_id in all_veh_ids:
                 try:
                     ego_pos = traci.vehicle.getPosition(self.config.ego_id)
                 except Exception:
                     pass
-            elif self.config.ego_id in self.actor_manager.active_actors:
+
+            if ego_pos is None and self.config.ego_id in self.actor_manager.active_actors:
+                # Before SUMO has the actor, fall back to what Unity last sent.
                 ego_actor = self.actor_manager.active_actors[self.config.ego_id]
                 ego_pos = (ego_actor.x, ego_actor.y)
 
@@ -200,6 +213,11 @@ class SyncEngine:
             all_person_ids = traci.person.getIDList()
             for pid in all_person_ids:
                 try:
+                    # Never send the XR subject back: Unity owns that pose, and
+                    # echoing it would spawn an NPC standing inside the headset.
+                    if self.config.ego_is_pedestrian and pid == self.config.ego_id:
+                        continue
+
                     pp = traci.person.getPosition3D(pid)
                     # Same radius filter as vehicles, so a pedestrian on the far
                     # side of the city costs nothing.

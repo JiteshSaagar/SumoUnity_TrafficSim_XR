@@ -224,7 +224,7 @@ python RequiredFiles/Sumo2UnityTool_combined.py --config Scenario1/Sumo2Unity.su
 | **SUMO TraCI Core** | ✅ Complete | Robust `SumoManager` supporting `sumo` & `sumo-gui`, auto `SUMO_HOME` detection. |
 | **ZeroMQ Async Bridge** | ✅ Complete | High-throughput non-blocking PUB (5556) and ROUTER (5557) threads. |
 | **Time & Step Pacing** | ✅ Complete | Sub-millisecond precision sleep with `perf_counter` and RTF tracking. |
-| **Multi-Actor Injection** | ⚠️ Vehicles only | Cars, dynamic bikes and scooters work. The `pedestrian` branch in `actors.py` is dead code — nothing ever creates the SUMO person it needs. See §8.4. |
+| **Multi-Actor Injection** | ✅ Complete | Cars, bikes, scooters, and — since Phase 2 — pedestrians, which are now created in SUMO rather than assumed to exist. See §8.10. |
 | **Modern GUI Dashboard** | ✅ Complete | Dark-themed dashboard with live telemetry cards (RTF, vehicles, ego speed). Window/app title reads `SumoUnity_TrafficSim_XR v2.1` (from `VERSION` in `RequiredFiles/sumo2unity/gui/app.py`). |
 | **CLI / Headless Mode** | ✅ Complete | Full `--headless` mode for automated testing and CI pipelines. |
 | **Unity Road Builder** | ✅ Complete | Reads XML and builds 3D roads, crossings, and terrain in editor mode. |
@@ -232,7 +232,7 @@ python RequiredFiles/Sumo2UnityTool_combined.py --config Scenario1/Sumo2Unity.su
 | **XR & VR Integration** | ✅ Complete | XR Origin rig, steering/pedal controls, eye-tracking logger. |
 | **Ground & Grass** | ✅ Complete | World-space ground UVs (constant texel density) + procedural grass generated around the camera. See §7. |
 | **SUMO → Unity Pedestrians** | ✅ Complete | Phase 1: `persons` channel end to end, verified over ZMQ. Needs a humanoid prefab or it draws capsules. See §8.9. |
-| **XR Pedestrian Ego** | ⚠️ Hack in place | XR rig is registered as the *car* trip `f_0.0`, so SUMO shows a car walking. Diagnosis §8.4, fix in Phase 2 (§8.6). |
+| **XR Pedestrian Ego** | ✅ Complete | Phase 2: injected as a real SUMO person (`ped_xr`); vehicles yield to it at the zebra. See §8.10. |
 | **Social Force Model** | ❌ Not implemented | Planned for Unity-side pedestrian agents. See §8.6. |
 | **Pedestrian Network (SUMO)** | ✅ Complete | Phase 0: sidewalks on all 19 edges, 14 crossings, 20 walking areas, 85 peds / 300 s. See §8.8. |
 | **Sidewalks / Walking Areas (3D)** | ⚠️ Partial | SUMO side done (§8.8); Unity still builds sidewalks as flat asphalt with no kerb and no walking areas. Phase 4. |
@@ -529,6 +529,11 @@ a mirror: the manager overwrites it whenever you edit there.
   visual gain, and it is a large cost in VR.
 - Grass needs a camera. In play mode it follows `Camera.main`, so the XR rig
   camera must be tagged **MainCamera**; in the editor it follows the Scene view.
+  **Measured 2026-09-06: `Scenario1` has zero cameras tagged MainCamera**, so
+  `ResolveCamera()` returns null in play mode and grass does not generate at all
+  while playing - it only appears in the Scene view. The desktop pedestrian rig
+  (§8.11) tags its own camera MainCamera and fixes this as a side effect; the
+  real XR rig needs the same tag.
 - Grass cell GameObjects are `HideAndDontSave`, so they do not appear in the
   Hierarchy and are never saved. Only the `GrassField` object under
   `RoadNetworkRoot` is part of the scene.
@@ -818,7 +823,7 @@ sidewalks in Unity, and stopping at the crossing when the light is against them.
 
 ---
 
-#### Phase 2 — Make the XR tester a real SUMO pedestrian *(removes the car hack)*
+#### Phase 2 — Make the XR tester a real SUMO pedestrian ✅ **DONE** — see §8.10
 
 This is the fix for the bug described in §8.4.
 
@@ -1220,3 +1225,184 @@ Two layout notes from the first import:
   untested in VR here.
 - Pedestrians are **destroyed and respawned** when they leave and re-enter the
   subscription radius, which resets their animation phase.
+
+---
+
+### 8.10 Phase 2 — Completed: the XR tester is a real SUMO pedestrian
+
+**Status: done and verified.** The car hack described in §8.4 is gone. With
+"Ego is XR pedestrian" ticked, the VR subject is injected into SUMO as a
+**person**, and SUMO vehicles yield to it at the crossing.
+
+#### The person lifecycle, and why the walking stage exists
+
+SUMO has no free-floating person: one must be created **on an edge**, and a
+person with **no remaining stage is deleted at the end of the step it was
+created in**. So `ActorManager._create_person` does three things:
+
+1. `simulation.convertRoad(x, y, vClass="pedestrian")` — turns the XR rig's
+   world position into the nearest pedestrian edge and lane position.
+2. `person.add(id, edge, pos, typeID="ped_xr")`.
+3. `person.appendWalkingStage(id, [edge], 1.0)` — a one-metre stage appended
+   **purely as a keep-alive**. It is never walked, because `moveToXY` overrides
+   the position every step.
+
+Verified by holding a person alive through **120 s of continuous `moveToXY`**:
+it survived, `getRemainingStages` never dropped to 0, and the road tracked
+correctly `E0 → :J8_2 → :J8_c0 → :J8_w0`.
+
+Creation is retried each step until it succeeds, so a subject who starts off the
+network simply gets injected once they step onto a pedestrian edge.
+`_note_create_failure` logs the first failure per actor at INFO and the rest at
+DEBUG, so standing off-network does not flood the console.
+
+#### Changes
+
+| File | Change |
+|---|---|
+| `config.py` | `ego_is_pedestrian`, `ego_person_type` (default `ped_xr`). |
+| `core/actors.py` | `_create_person()` + `_note_create_failure()`; the `pedestrian` branch now **creates** the person instead of silently skipping when absent. This is what made the old branch dead code. |
+| `core/sync_engine.py` | Ego position for the radius filter now reads `traci.person` when the ego is a pedestrian; the XR subject is excluded from the outbound `persons` message. |
+| `core/sumo_manager.py` | SUMO-GUI follows a pedestrian ego via `gui.track()`; `gui.trackVehicle()` only accepts vehicles, so the camera previously just never followed. |
+| `gui/app.py` | **Ego is XR pedestrian** checkbox and an **Ego ID** field. Toggling swaps the id between `f_0.0` and `xr_ped`, but only when the field still holds the other mode's default, so a hand-typed id is never clobbered. |
+| `SimulationController.cs` | `maxPedestrianSpeed` clamp (default 6 m/s). |
+
+The speed clamp matters: an XR rig has no Rigidbody, so speed is differenced
+from camera position. A recentre, teleport or dropped frame moves the camera
+metres in one step, which would report tens of m/s into SUMO's telemetry.
+
+#### Verified
+
+| Check | Result |
+|---|---|
+| XR ego exists in SUMO as a **person** | ✅ `type=ped_xr`, injected on edge `E0` at pos 9.54 |
+| XR ego wrongly exists as a **vehicle** | ✅ no |
+| Road tracks as the subject walks and crosses | ✅ `E0 → :J8_2 → :J8_c0 → :J8_w0` |
+| **Not** echoed back to Unity as an NPC | ✅ false |
+| Other pedestrians still stream to Unity | ✅ 15 distinct |
+| Vehicles halt while the XR subject stands on the zebra | ✅ 10 |
+| Telemetry `active_persons` / `ego_speed` | ✅ 10 / 1.3 |
+| C# compile | ✅ 0 errors |
+
+#### ⚠️ Manual step — switching the scene to pedestrian mode
+
+On **Managers → Simulation Controller**:
+
+1. Tick **Is Pedestrian**.
+2. Set **Ego Vehicle Id** to `xr_ped` — a **person id**, not a trip from the
+   route file. Leaving it at `f_0.0` recreates the original bug, because the
+   backend would inject a person named after a car trip.
+3. Tick **Is Scene Object** and set **Ego Vehicle** to the `XR Pedestrian` rig,
+   so Unity moves the existing rig instead of cloning it.
+4. Leave **Max Pedestrian Speed** at 6.
+
+In the Python dashboard, tick **Ego is XR pedestrian**; the Ego ID field
+switches to `xr_ped` on its own.
+
+`f_0.0` stays in the route file for driving experiments — the two modes coexist,
+you just pick one per run.
+
+#### Harmless SUMO warnings you will see
+
+Both are expected for an externally driven pedestrian and neither breaks
+anything:
+
+- `Person 'xr_ped' entered crossing lane ':J8_c0_0' without registering approach`
+  — the subject stepped onto the zebra without SUMO's normal approach protocol,
+  which is exactly what a teleporting external controller does. Vehicles still
+  yield; that is measured above.
+- `Could not map position … onto lane ':J8_w0_0'` — occasional walking-area
+  mapping misses. The position is still held exactly.
+
+#### Known limit — the road id goes stale off-network
+
+If the subject walks well off any pedestrian edge (easy in room-scale VR),
+`moveToXY` keeps the exact position but `getRoadID` **keeps returning the last
+matched road**. Measured: standing 60 m off-network still reported `:J8_c0`.
+
+Traffic is *not* affected — SUMO yields on true geometry, so 22 vehicles passed
+at speed while the subject was 60 m away, versus 2 stopping for unrelated
+pedestrians. But it does mean the `state` field is unreliable for the ego when
+it is off-network, which matters for Phase 5 crossing analytics: derive the
+subject's crossing state from Unity-side geometry, not from SUMO's road id.
+
+---
+
+### 8.11 Desktop pedestrian — testing Phase 2 without a headset
+
+A keyboard/mouse stand-in for the XR rig, so the pedestrian co-simulation can be
+driven and tested with no VR hardware attached. Everything downstream is
+identical: SUMO still sees a `ped_xr` person, and vehicles still yield.
+
+#### Creating it
+
+Menu **Sumo2Unity → 4. Create Desktop Test Pedestrian**.
+
+That builds the rig, saves it to `Assets/_Project/Prefabs/DesktopPedestrian.prefab`,
+places it in the scene, and wires `SimulationController` automatically:
+`Is Pedestrian = true`, `Is Scene Object = true`, `Ego Vehicle = the rig`,
+`Ego Vehicle Id = xr_ped`.
+
+The prefab is **generated by an editor script rather than committed as
+hand-written YAML**, so Unity itself serialises the Camera and the component
+references. Hand-authored prefab YAML is the kind of thing that loads fine until
+it doesn't.
+
+Then in the Python dashboard tick **Ego is XR pedestrian** (the Ego ID field
+switches to `xr_ped` on its own), start the backend, and press Play.
+
+#### Controls
+
+| Input | Action |
+|---|---|
+| **W A S D** | Walk |
+| **Mouse** | Look. Yaw turns the body, so SUMO gets the heading you are facing |
+| **Shift** | Run (3.0 m/s) |
+| **Ctrl** | Slow (0.6 m/s), for edging up to a kerb |
+| **Esc** | Release the cursor |
+| **Click** | Recapture the cursor |
+
+Default walk speed is **1.4 m/s**, matching the `ped_adult` vType in the route
+file, and run stays under the 6 m/s clamp `SimulationController` applies to a
+pedestrian ego.
+
+#### Where it spawns, and what to try
+
+Spawns at Unity `(-45, 0, 6.27)` facing **east**, which is the `E0` sidewalk west
+of the J8 zebra. Verified: `convertRoad` maps it to edge `E0`, pos 9.49, lane 0
+— a real sidewalk lane, so the SUMO person injects immediately.
+
+To reproduce the Phase 2 result by hand:
+
+1. Hold **W** for about 10 s (13.7 m at walking pace) to reach the kerb.
+2. Turn left and step onto the zebra — SUMO road becomes `:J8_c0`.
+3. Watch traffic on `-E0` brake and stop about a metre short of you.
+
+Verified mapping along that route: `E0` → `:J8_2` → `:J8_c0` → `:J8_0`.
+
+#### Design notes
+
+- **Plain transform walker, not a CharacterController.** The generated road
+  network has no guaranteed colliders, and a CharacterController with nothing to
+  stand on falls through the world. Ground following is an optional raycast that
+  **keeps the last good height when it hits nothing**, so it works whether or not
+  the meshes have colliders.
+- **Root on the ground, camera child at 1.7 m**, mirroring an XR Origin.
+  `SimulationController` reports the *root* position to SUMO, so the pedestrian
+  must be standing on the pavement rather than floating at eye height.
+- **Pitch is camera-only.** Tilting the root would tilt the heading sent to SUMO
+  and lift the body off the ground plane.
+- Uses the **legacy `Input` API**, which is valid here because Project Settings
+  has `activeInputHandler: 2` ("Both"). No Input Actions asset needed, so the rig
+  has no package dependency.
+- The camera is tagged **MainCamera** deliberately — see §7.3: `Scenario1` had
+  none, which meant grass never generated in play mode. The setup script warns if
+  other cameras are already tagged MainCamera, since `Camera.main` then picks one
+  arbitrarily; disable the XR rig or ego car camera while testing on desktop.
+
+#### Switching back to real XR
+
+Set `SimulationController.Ego Vehicle` back to the `XR Pedestrian` rig and
+disable the desktop rig. Everything else — `Is Pedestrian`, `Ego Vehicle Id`,
+the backend checkbox — stays the same, because the desktop rig is only a
+different way of moving the same transform.

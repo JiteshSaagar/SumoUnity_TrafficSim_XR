@@ -120,6 +120,10 @@ class SumoManager:
                 self.traci_module.gui.setZoom(view_id, float(self.zoom))
                 if self.ego_id in self.traci_module.vehicle.getIDList():
                     self.traci_module.gui.trackVehicle(view_id, self.ego_id)
+                elif self.ego_id in self.traci_module.person.getIDList():
+                    # trackVehicle only accepts vehicles; gui.track takes any
+                    # object, which is how a pedestrian ego gets followed.
+                    self.traci_module.gui.track(self.ego_id, view_id)
         except Exception as err:
             logger.debug("Could not configure initial GUI camera tracking: %s", err)
 

@@ -19,8 +19,15 @@ public class SimulationController : MonoBehaviour
     [Header("Ego Settings")]
     public GameObject egoVehicle;
     public string egoVehicleId = "f_0.0";
-    [Tooltip("Check this if your ego is a VR Pedestrian so SUMO knows how to process it.")]
+    [Tooltip("Check this if your ego is a VR Pedestrian so SUMO knows how to process it. " +
+             "The backend then injects it as a SUMO person instead of a vehicle, so set " +
+             "Ego Vehicle Id to a person id (e.g. xr_ped), NOT a trip from the route file.")]
     public bool isPedestrian = false;
+
+    [Tooltip("Speed ceiling for a pedestrian ego, in m/s. An XR rig recentre or " +
+             "teleport moves the camera metres in one frame, which differencing " +
+             "would report to SUMO as tens of m/s. Sprinting is about 6 m/s.")]
+    public float maxPedestrianSpeed = 6f;
     [Tooltip("Check this if the Ego is already in the scene (like an XR Origin) so Unity doesn't clone it.")]
     public bool isSceneObject = false; 
     public Vector3 egoVehicleInitialPosition = new Vector3(0f, 0f, 0f);
@@ -304,6 +311,17 @@ public class SimulationController : MonoBehaviour
         }
 
         previousPosition = currentPosition;
+
+        // An XR rig has no Rigidbody, so speed comes from differencing the camera
+        // position. A recentre, a teleport or a dropped frame moves it metres in
+        // one step and would emit an absurd speed into SUMO's telemetry; clamp it
+        // to something a human could actually do.
+        if (isPedestrian)
+        {
+            long_speed = Mathf.Min(long_speed, maxPedestrianSpeed);
+            vertical_speed = Mathf.Clamp(vertical_speed, -maxPedestrianSpeed, maxPedestrianSpeed);
+            lateral_speed = Mathf.Clamp(lateral_speed, -maxPedestrianSpeed, maxPedestrianSpeed);
+        }
 
         float unroundangle = egoObj.transform.rotation.eulerAngles.y;
         double angle = Math.Round(unroundangle, 2);

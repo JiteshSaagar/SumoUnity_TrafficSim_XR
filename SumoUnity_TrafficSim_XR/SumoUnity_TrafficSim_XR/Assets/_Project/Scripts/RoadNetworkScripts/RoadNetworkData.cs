@@ -18,6 +18,20 @@ namespace Assets.Scripts.SUMOImporter.NetFileComponents
         public double laneWidth;      // <-- new
         public List<double[]> shapePoints;
 
+        /// <summary>Raw SUMO vClass permissions, e.g. allow="pedestrian".</summary>
+        public string allow;
+        public string disallow;
+
+        /// <summary>
+        /// True when this lane is a footway. SUMO writes a sidewalk as a lane
+        /// that explicitly allows pedestrians, and a carriageway as one that
+        /// disallows them, so the allow list is the reliable test - lane index 0
+        /// is not, because an edge without a sidewalk also has a lane 0.
+        /// </summary>
+        public bool IsSidewalk =>
+            !string.IsNullOrEmpty(allow) &&
+            allow.IndexOf("pedestrian", StringComparison.OrdinalIgnoreCase) >= 0;
+
         public RoadLaneData(string identifier)
         {
             laneId = identifier;
@@ -31,6 +45,14 @@ namespace Assets.Scripts.SUMOImporter.NetFileComponents
             laneLength = length;
             laneWidth = width;       // <-- set it here
             ParseShapeCoordinates(shapeStr);
+        }
+
+        public RoadLaneData(string identifier, int index, double speed, double length, double width,
+                            string shapeStr, string allowList, string disallowList)
+            : this(identifier, index, speed, length, width, shapeStr)
+        {
+            allow = allowList;
+            disallow = disallowList;
         }
 
         private void ParseShapeCoordinates(string shapeStr)
@@ -183,6 +205,14 @@ namespace Assets.Scripts.SUMOImporter.NetFileComponents
 
         // Modified signature to accept width
         public void AddLaneData(string laneId, string index, float speed, float length, float width, string shapeStr)
+            => AddLaneData(laneId, index, speed, length, width, shapeStr, null, null);
+
+        /// <summary>
+        /// Overload carrying SUMO's vClass permissions, which is what tells a
+        /// sidewalk apart from a carriageway.
+        /// </summary>
+        public void AddLaneData(string laneId, string index, float speed, float length, float width,
+                                string shapeStr, string allowList, string disallowList)
         {
             var builder = RoadNetworkBuilder.Singleton;
             if (builder == null)
@@ -201,6 +231,9 @@ namespace Assets.Scripts.SUMOImporter.NetFileComponents
                 shapeStr
             );
 
+            laneObj.allow = allowList;
+            laneObj.disallow = disallowList;
+
             // Also store a local copy with width
             laneDataList.Add(
                 new RoadLaneData(
@@ -209,7 +242,9 @@ namespace Assets.Scripts.SUMOImporter.NetFileComponents
                     speed,
                     length,
                     width,
-                    shapeStr
+                    shapeStr,
+                    allowList,
+                    disallowList
                 )
             );
         }

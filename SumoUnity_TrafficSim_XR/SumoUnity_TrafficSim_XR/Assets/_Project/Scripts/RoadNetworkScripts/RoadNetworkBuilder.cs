@@ -70,6 +70,50 @@ public class RoadNetworkBuilder : MonoBehaviour
     [Header("Pedestrian Crossings")]
     public Material zebraCrossingMaterial;
 
+    [Header("Sidewalks & Walking Areas")]
+    [Tooltip("Surface material for sidewalks and walking areas. Leave empty to " +
+             "auto-load Assets/_Project/Materials/Mat_Sidewalk.mat, falling back " +
+             "to the road material.")]
+    public Material sidewalkMaterial;
+
+    [Tooltip("Material for the vertical kerb face. Falls back to the sidewalk " +
+             "material when empty.")]
+    public Material kerbMaterial;
+
+    [Tooltip("How far sidewalks and walking areas sit above the carriageway, in " +
+             "metres. 0 renders them flush, as before Phase 4.")]
+    [Range(0f, 0.4f)] public float sidewalkHeight = 0.12f;
+
+    [Tooltip("Build the vertical kerb face down to road level. Off gives a " +
+             "floating slab, which reads badly at pedestrian eye height.")]
+    public bool buildKerbs = true;
+
+    [Tooltip("Metres of world space per pavement texture tile. Sidewalks, " +
+             "walking areas and kerbs all use world-space UVs at this density, " +
+             "so the pattern never stretches at corners or across junctions. " +
+             "Leave the material tiling at 1,1 or the two multiply.")]
+    public float sidewalkMetresPerTile = 2f;
+
+    [Tooltip("Lifts walking areas this far above the sidewalks they overlap, to " +
+             "break the depth tie that causes z-fighting at junction corners. " +
+             "Small enough to be invisible and to not trip a pedestrian raycast.")]
+    [Range(0f, 0.02f)] public float walkingAreaDepthBias = 0.004f;
+
+    [Tooltip("Run a pavement band around the exposed rim of each junction. SUMO " +
+             "inflates junction shapes to cover the area swept by turning " +
+             "vehicles, which at acute corners leaves bare asphalt outside the " +
+             "sidewalk; this makes the kerb follow the tarmac outline instead.")]
+    public bool buildJunctionPavement = true;
+
+    [Tooltip("Width used for junction pavement bands, in metres. Match it to the " +
+             "sidewalk width in the SUMO network (2.0 in Scenario1).")]
+    public float sidewalkWidthFallback = 2f;
+
+    [Tooltip("How close a junction outline point must be to a carriageway to " +
+             "count as a road mouth and be left unpaved. Too small and a kerb is " +
+             "laid across the road; too large and the rim goes bare.")]
+    public float junctionPavementMouthClearance = 1.5f;
+
     [Header("Ground Texturing")]
     [Tooltip("Metres of world space per texture tile on terrain and roadside " +
              "polygons. Smaller = sharper ground. Materials using this should " +
@@ -136,6 +180,22 @@ public class RoadNetworkBuilder : MonoBehaviour
     // ★ NEW: Dictionary for Crossings
     public Dictionary<string, SumoCrossingData> crossingRecords = new Dictionary<string, SumoCrossingData>();
 
+    /// Walking areas: the connective patches at junction corners that join
+    /// sidewalks to crossings. Their lane "shape" is a closed outline, not a
+    /// centreline, so they are triangulated as polygons rather than extruded.
+    public Dictionary<string, List<Vector2>> walkingAreaRecords = new Dictionary<string, List<Vector2>>();
+
+    // Footprints handed to the Social Force Model (Phase 3) as wall boundaries.
+    private readonly List<WalkablePolygon> _walkablePolys = new();
+
+    // Pedestrian outlines already built (sidewalk ribbons and walking areas),
+    // so junction rim paving only covers rim that is genuinely still bare.
+    private readonly List<Vector2[]> _pedestrianFootprints = new();
+
+    // Carriageway outlines, so junction rim paving can tell a road mouth from
+    // an exposed edge and avoid laying a kerb across the traffic lanes.
+    private readonly List<Vector2[]> _carriagewayFootprints = new();
+
     private string sumoXmlFolderPath;
 
     private float minX = 0f, minY = 0f, maxX = 0f, maxY = 0f;
@@ -166,6 +226,10 @@ public class RoadNetworkBuilder : MonoBehaviour
         edgeRecords?.Clear();
         polygonShapes?.Clear();
         crossingRecords?.Clear();
+        walkingAreaRecords?.Clear();
+        _walkablePolys.Clear();
+        _carriagewayFootprints.Clear();
+        _pedestrianFootprints.Clear();
         _junctionPolys2D.Clear();
         _terrainPolys2D.Clear();
         _grassExclusions.Clear();
@@ -187,6 +251,7 @@ public class RoadNetworkBuilder : MonoBehaviour
         junctionRecords = new();
         polygonShapes = new();
         crossingRecords = new();
+        walkingAreaRecords = new();
 
         NetType netFile;
         {
@@ -233,6 +298,45 @@ public class RoadNetworkBuilder : MonoBehaviour
         catch (Exception ex)
         {
             Debug.LogError($"Failed to parse custom crossing tags: {ex.Message}");
+        }
+
+        // Walking areas, parsed the same way and for the same reason: they are
+        // internal edges with no "from" attribute, so the typed pass below skips
+        // them entirely. Without this, junction corners have no pedestrian
+        // surface and SUMO's pedestrians appear to walk on nothing.
+        try
+        {
+            var waDoc = new System.Xml.XmlDocument();
+            waDoc.Load(netFilePath);
+            System.Xml.XmlNodeList waEdges = waDoc.SelectNodes("//edge[@function='walkingarea']");
+            if (waEdges != null)
+            {
+                foreach (System.Xml.XmlNode edgeNode in waEdges)
+                {
+                    var laneNode = edgeNode.SelectSingleNode("lane");
+                    if (laneNode?.Attributes?["shape"] == null) continue;
+
+                    string waId = edgeNode.Attributes["id"]?.Value;
+                    if (string.IsNullOrEmpty(waId) || walkingAreaRecords.ContainsKey(waId)) continue;
+
+                    var ring = new List<Vector2>();
+                    foreach (string pair in laneNode.Attributes["shape"].Value.Split(' '))
+                    {
+                        if (string.IsNullOrWhiteSpace(pair)) continue;
+                        var xy = pair.Split(',');
+                        if (xy.Length < 2) continue;
+                        ring.Add(new Vector2(
+                            float.Parse(xy[0], System.Globalization.CultureInfo.InvariantCulture),
+                            float.Parse(xy[1], System.Globalization.CultureInfo.InvariantCulture)));
+                    }
+
+                    if (ring.Count >= 3) walkingAreaRecords.Add(waId, ring);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.LogError($"Failed to parse walking areas: {ex.Message}");
         }
 
         if (!string.IsNullOrEmpty(netFile.Location?.ConvBoundary))
@@ -305,7 +409,9 @@ public class RoadNetworkBuilder : MonoBehaviour
                     laneType.Speed,
                     laneType.Length,
                     width,
-                    laneType.Shape);
+                    laneType.Shape,
+                    laneType.Allow,
+                    laneType.Disallow);
             }
         }
 
@@ -367,6 +473,23 @@ public class RoadNetworkBuilder : MonoBehaviour
                 Mesh laneMesh = CreateLaneMesh(lanePoints, laneWidth, laneUvHorizontalScale, laneUvVerticalScale);
                 if (laneMesh == null) continue;
 
+                // Sidewalks are a different surface, not just a differently
+                // permitted lane: they sit on a kerb, take the pavement
+                // material, and carry no lane markings. They also need mitred
+                // corners, which CreateLaneMesh cannot give them.
+                if (laneData.IsSidewalk)
+                {
+                    Mesh walkMesh = CreateSidewalkRibbon(lanePoints, laneWidth, out Vector2[] walkFootprint);
+                    if (walkMesh == null) continue;
+
+                    BuildSidewalk(walkMesh, walkFootprint, laneData.laneId);
+                    _grassExclusions.Add(new GrassPolygon(walkFootprint));
+                    continue;
+                }
+
+                Vector2[] footprint = BuildLaneFootprint(laneMesh);
+                _carriagewayFootprints.Add(footprint);
+
                 var laneObj = new GameObject($"LaneSegment_{laneCounter++}");
                 laneObj.transform.SetParent(roadNetworkRoot.transform);
                 if (groundLayer >= 0) laneObj.layer = groundLayer;
@@ -375,7 +498,7 @@ public class RoadNetworkBuilder : MonoBehaviour
                 mf.sharedMesh = laneMesh;
                 mr.sharedMaterial = roadSurfaceMaterial ?? GetFallbackMaterial();
 
-                _grassExclusions.Add(new GrassPolygon(BuildLaneFootprint(laneMesh)));
+                _grassExclusions.Add(new GrassPolygon(footprint));
 
                 var ctrl = laneObj.AddComponent<LaneMarkingController>();
                 ctrl.markingMaterial = ResolveLaneMarkingMaterial();
@@ -465,12 +588,610 @@ public class RoadNetworkBuilder : MonoBehaviour
 
             cMr.material = zebraCrossingMaterial ?? roadMarkingMaterial ?? GetFallbackMaterial();
 
-            _grassExclusions.Add(new GrassPolygon(BuildLaneFootprint(crossingMesh)));
+            Vector2[] crossingFootprint = BuildLaneFootprint(crossingMesh);
+            _grassExclusions.Add(new GrassPolygon(crossingFootprint));
+            _walkablePolys.Add(new WalkablePolygon(crossingFootprint, WalkableKind.Crossing));
         }
+
+        BuildWalkingAreas();
+        BuildJunctionPavements();
+        PublishWalkableAreas();
 
         SetLayerRecursively(roadNetworkRoot, groundLayer);
 
         CreateGrassField();
+    }
+
+    /// <summary>
+    /// Builds one sidewalk: the raised walking surface plus, optionally, the
+    /// vertical kerb face down to carriageway level.
+    ///
+    /// The slab is lifted by moving the GameObject rather than the vertices, so
+    /// the mesh stays identical to a carriageway lane and the footprint used for
+    /// grass exclusion and social-force walls needs no separate transform.
+    /// </summary>
+    private void BuildSidewalk(Mesh laneMesh, Vector2[] footprint, string laneId)
+    {
+        var obj = new GameObject($"Sidewalk_{laneId}");
+        obj.transform.SetParent(roadNetworkRoot.transform);
+        obj.transform.localPosition = new Vector3(0f, sidewalkHeight, 0f);
+        if (groundLayer >= 0) obj.layer = groundLayer;
+
+        var mf = obj.AddComponent<MeshFilter>();
+        var mr = obj.AddComponent<MeshRenderer>();
+        mf.sharedMesh = laneMesh;
+        mr.sharedMaterial = RequireMaterial(ResolveSidewalkMaterial(), "sidewalk");
+
+        // A collider so the desktop and XR pedestrians can stand on the kerb
+        // rather than clip through it. DesktopPedestrianController raycasts down
+        // and keeps its last height when nothing is hit, so before Phase 4 it
+        // simply walked at road level everywhere.
+        obj.AddComponent<MeshCollider>().sharedMesh = laneMesh;
+
+        if (buildKerbs && sidewalkHeight > 0.001f)
+        {
+            Mesh kerb = BuildKerbMesh(footprint, sidewalkHeight);
+            if (kerb != null)
+            {
+                var kerbObj = new GameObject($"Kerb_{laneId}");
+                kerbObj.transform.SetParent(roadNetworkRoot.transform);
+                if (groundLayer >= 0) kerbObj.layer = groundLayer;
+                kerbObj.AddComponent<MeshFilter>().sharedMesh = kerb;
+                // Deliberately not `kerbMaterial ?? ResolveSidewalkMaterial()`:
+                // ?? bypasses Unity's overloaded == operator, so an unassigned
+                // or destroyed Material sneaks through as non-null and the kerb
+                // renders magenta.
+                kerbObj.AddComponent<MeshRenderer>().sharedMaterial = RequireMaterial(
+                    kerbMaterial != null ? kerbMaterial : ResolveSidewalkMaterial(), "kerb");
+            }
+        }
+
+        _walkablePolys.Add(new WalkablePolygon(footprint, WalkableKind.Sidewalk));
+        _pedestrianFootprints.Add(footprint);
+    }
+
+    /// <summary>
+    /// Builds a sidewalk ribbon with mitred corners and world-space UVs.
+    ///
+    /// Deliberately separate from <see cref="CreateLaneMesh"/>, which emits four
+    /// unshared vertices per segment and recomputes the perpendicular from each
+    /// segment in isolation. On a straight that is fine; at a corner the two
+    /// quads meeting at a point use different perpendiculars, so they splay
+    /// apart on the outside of the turn and overlap on the inside. A 2 m
+    /// sidewalk with a tiled pattern makes that obvious, where dark asphalt hid
+    /// it. CreateLaneMesh is left untouched because LaneMarkingController reads
+    /// its exact vertex layout through Extract*SideVertices.
+    ///
+    /// Here each centre point produces exactly one left and one right vertex,
+    /// offset along the angle bisector, so consecutive segments share an edge
+    /// and the ribbon stays continuous through corners.
+    /// </summary>
+    private Mesh CreateSidewalkRibbon(Vector3[] pts, float width, out Vector2[] footprint)
+    {
+        footprint = null;
+        if (pts == null || pts.Length < 2) return null;
+
+        // Drop repeated points: a zero-length segment has no direction, and the
+        // bisector at that point would be undefined.
+        var pl = new List<Vector3>(pts.Length) { pts[0] };
+        for (int i = 1; i < pts.Length; i++)
+        {
+            if ((pts[i] - pl[pl.Count - 1]).sqrMagnitude > 1e-6f) pl.Add(pts[i]);
+        }
+        if (pl.Count < 2) return null;
+
+        int n = pl.Count;
+        float half = width * 0.5f;
+
+        var left = new Vector3[n];
+        var right = new Vector3[n];
+
+        for (int i = 0; i < n; i++)
+        {
+            Vector3 dPrev = i > 0 ? (pl[i] - pl[i - 1]).normalized : Vector3.zero;
+            Vector3 dNext = i < n - 1 ? (pl[i + 1] - pl[i]).normalized : Vector3.zero;
+
+            if (i == 0) dPrev = dNext;
+            if (i == n - 1) dNext = dPrev;
+
+            Vector3 nPrev = new Vector3(-dPrev.z, 0f, dPrev.x);
+            Vector3 nNext = new Vector3(-dNext.z, 0f, dNext.x);
+
+            Vector3 miter = nPrev + nNext;
+            if (miter.sqrMagnitude < 1e-8f)
+            {
+                // A near-180 degree reversal: the bisector collapses. Fall back
+                // to the incoming normal rather than emitting a NaN vertex.
+                miter = nNext;
+            }
+            miter.Normalize();
+
+            // 1/cos(theta/2) lengthens the offset so the outer edge stays
+            // parallel to both segments. Clamped, because a hairpin would
+            // otherwise throw a spike halfway across the map.
+            float cos = Vector3.Dot(miter, nNext);
+            float scale = Mathf.Abs(cos) < 0.25f ? 4f : 1f / cos;
+            scale = Mathf.Clamp(scale, -4f, 4f);
+
+            Vector3 offset = miter * half * scale;
+            left[i] = pl[i] + offset;
+            right[i] = pl[i] - offset;
+        }
+
+        int segs = n - 1;
+        var vertices = new Vector3[n * 2];
+        var uvs = new Vector2[n * 2];
+        var triangles = new int[segs * 6];
+
+        float tile = Mathf.Max(0.05f, sidewalkMetresPerTile);
+        for (int i = 0; i < n; i++)
+        {
+            vertices[i * 2 + 0] = left[i];
+            vertices[i * 2 + 1] = right[i];
+
+            // World-space UVs: constant texel density everywhere, so the pattern
+            // neither stretches on long straights nor bunches at corners, and it
+            // matches the walking areas and kerbs that abut it.
+            uvs[i * 2 + 0] = new Vector2(left[i].x / tile, left[i].z / tile);
+            uvs[i * 2 + 1] = new Vector2(right[i].x / tile, right[i].z / tile);
+        }
+
+        for (int i = 0; i < segs; i++)
+        {
+            int v = i * 2;
+            int t = i * 6;
+            triangles[t + 0] = v;
+            triangles[t + 1] = v + 2;
+            triangles[t + 2] = v + 1;
+            triangles[t + 3] = v + 2;
+            triangles[t + 4] = v + 3;
+            triangles[t + 5] = v + 1;
+        }
+
+        var mesh = new Mesh
+        {
+            name = "SidewalkRibbon",
+            vertices = vertices,
+            uv = uvs,
+            triangles = triangles
+        };
+        mesh.RecalculateNormals();
+        mesh.RecalculateBounds();
+
+        if (mesh.normals.Length > 0 && mesh.normals[0].y < 0f)
+        {
+            FlipTriangleWinding(mesh);
+            mesh.RecalculateNormals();
+        }
+
+        // Closed outline: down the left edge, back along the right.
+        footprint = new Vector2[n * 2];
+        for (int i = 0; i < n; i++) footprint[i] = new Vector2(left[i].x, left[i].z);
+        for (int i = 0; i < n; i++)
+            footprint[n + i] = new Vector2(right[n - 1 - i].x, right[n - 1 - i].z);
+
+        return mesh;
+    }
+
+    /// <summary>
+    /// World-space UVs for an already-built polygon mesh, so a walking area
+    /// tiles at the same density as the sidewalks it joins. Bounds-normalised
+    /// UVs stretch one whole tile across the polygon regardless of its size,
+    /// which is why small landing areas looked smeared next to the pavement.
+    /// </summary>
+    private void ApplyWorldSpaceUv(Mesh mesh)
+    {
+        Vector3[] v = mesh.vertices;
+        var uv = new Vector2[v.Length];
+        float tile = Mathf.Max(0.05f, sidewalkMetresPerTile);
+        for (int i = 0; i < v.Length; i++)
+            uv[i] = new Vector2(v[i].x / tile, v[i].z / tile);
+        mesh.uv = uv;
+    }
+
+    /// <summary>
+    /// A vertical skirt around a footprint, from <paramref name="height"/> down
+    /// to 0. Built as a separate mesh from the slab so the kerb face can take a
+    /// different material without needing submeshes.
+    /// </summary>
+    private Mesh BuildKerbMesh(Vector2[] footprint, float height)
+    {
+        if (footprint == null || footprint.Length < 2) return null;
+
+        int n = footprint.Length;
+        var verts = new Vector3[n * 4];
+        var uvs = new Vector2[n * 4];
+        var tris = new int[n * 6];
+
+        float running = 0f;
+        for (int i = 0; i < n; i++)
+        {
+            Vector2 a = footprint[i];
+            Vector2 b = footprint[(i + 1) % n];
+
+            int v = i * 4;
+            verts[v + 0] = new Vector3(a.x, height, a.y);
+            verts[v + 1] = new Vector3(b.x, height, b.y);
+            verts[v + 2] = new Vector3(a.x, 0f, a.y);
+            verts[v + 3] = new Vector3(b.x, 0f, b.y);
+
+            // Horizontal UV follows distance along the kerb and vertical
+            // follows real height, both divided by the same tile size the
+            // pavement uses, so kerb and slab share one texel density.
+            float seg = Vector2.Distance(a, b);
+            float tile = Mathf.Max(0.05f, sidewalkMetresPerTile);
+            float u0 = running / tile;
+            float u1 = (running + seg) / tile;
+            float vTop = height / tile;
+            uvs[v + 0] = new Vector2(u0, vTop);
+            uvs[v + 1] = new Vector2(u1, vTop);
+            uvs[v + 2] = new Vector2(u0, 0f);
+            uvs[v + 3] = new Vector2(u1, 0f);
+            running += seg;
+
+            int t = i * 6;
+            tris[t + 0] = v + 0; tris[t + 1] = v + 2; tris[t + 2] = v + 1;
+            tris[t + 3] = v + 1; tris[t + 4] = v + 2; tris[t + 5] = v + 3;
+        }
+
+        var mesh = new Mesh { name = "Kerb", vertices = verts, uv = uvs, triangles = tris };
+        mesh.RecalculateNormals();
+        mesh.RecalculateBounds();
+        return mesh;
+    }
+
+    /// <summary>
+    /// Builds the walking areas: the connective patches at junction corners that
+    /// join sidewalks to crossings. Unlike a lane, a walking area SUMO shape is
+    /// already a closed outline, so it is triangulated directly rather than
+    /// extruded along a centreline.
+    /// </summary>
+    private void BuildWalkingAreas()
+    {
+        if (walkingAreaRecords == null || walkingAreaRecords.Count == 0) return;
+
+        int built = 0, skipped = 0;
+        foreach (var kv in walkingAreaRecords)
+        {
+            List<Vector2> ring = DedupeRing(kv.Value);
+            if (ring.Count < 3) continue;
+
+            var verts2D = new Vector2[ring.Count];
+            for (int i = 0; i < ring.Count; i++)
+                verts2D[i] = new Vector2(ring[i].x - originX, ring[i].y - originY);
+
+            int[] tris;
+            try
+            {
+                tris = new MeshTriangulator(verts2D).GenerateIndices();
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"Walking area {kv.Key} could not be triangulated: {ex.Message}");
+                continue;
+            }
+            if (tris == null || tris.Length < 3)
+            {
+                Debug.LogWarning($"Walking area {kv.Key} produced no triangles " +
+                                 $"({ring.Count} points); skipped.");
+                skipped++;
+                continue;
+            }
+
+            var verts3D = new Vector3[verts2D.Length];
+            for (int i = 0; i < verts2D.Length; i++)
+                verts3D[i] = new Vector3(verts2D[i].x, 0f, verts2D[i].y);
+
+            var mesh = new Mesh { name = $"WalkingArea_{kv.Key}", vertices = verts3D, triangles = tris };
+            mesh.RecalculateNormals();
+
+            // Same guard BuildPolygonGameObject uses. Measured on Scenario1 the
+            // walking areas and the junctions share a winding, so this is not
+            // what was hiding them - but a downward-facing polygon is invisible
+            // and costs nothing to rule out.
+            if (mesh.normals.Length > 0 && mesh.normals[0].y < 0f)
+            {
+                FlipTriangleWinding(mesh);
+                mesh.RecalculateNormals();
+            }
+
+            Bounds b = mesh.bounds;
+            var uv = new Vector2[verts3D.Length];
+            for (int i = 0; i < verts3D.Length; i++)
+                uv[i] = new Vector2(
+                    b.size.x > 0f ? (verts3D[i].x - b.min.x) / b.size.x : 0f,
+                    b.size.z > 0f ? (verts3D[i].z - b.min.z) / b.size.z : 0f);
+            mesh.uv = uv;
+            ApplyWorldSpaceUv(mesh);
+            mesh.RecalculateNormals();
+            mesh.RecalculateBounds();
+
+            var obj = new GameObject($"WalkingArea_{kv.Key}");
+            obj.transform.SetParent(roadNetworkRoot.transform);
+            // Sits level with the sidewalks it connects, otherwise pedestrians
+            // would step down and back up at every junction corner.
+            //
+            // The extra few millimetres are not cosmetic padding: measured on
+            // Scenario1, 23 sidewalk/walking-area pairs genuinely overlap at
+            // junction corners, because SUMO cuts the sidewalk back to the
+            // junction while the walking area reaches out to meet it. Two
+            // coplanar surfaces at exactly the same height give the depth test
+            // nothing to separate them, and the result is the shimmering
+            // patchwork that shows up around sharp junctions. Breaking the tie
+            // is the standard fix - the same trick the crossings already use to
+            // sit above the carriageway.
+            obj.transform.localPosition =
+                new Vector3(0f, sidewalkHeight + walkingAreaDepthBias, 0f);
+            if (groundLayer >= 0) obj.layer = groundLayer;
+
+            obj.AddComponent<MeshFilter>().sharedMesh = mesh;
+            obj.AddComponent<MeshRenderer>().sharedMaterial =
+                RequireMaterial(ResolveSidewalkMaterial(), "walking area");
+            obj.AddComponent<MeshCollider>().sharedMesh = mesh;
+
+            // A walking area is raised to kerb height like the sidewalks it
+            // joins, so without its own skirt it reads as a floating slab -
+            // most visible right at the crossing, where you look straight at
+            // the open edge.
+            if (buildKerbs && sidewalkHeight > 0.001f)
+            {
+                Mesh waKerb = BuildKerbMesh(verts2D, sidewalkHeight);
+                if (waKerb != null)
+                {
+                    var waKerbObj = new GameObject($"Kerb_{kv.Key}");
+                    waKerbObj.transform.SetParent(roadNetworkRoot.transform);
+                    if (groundLayer >= 0) waKerbObj.layer = groundLayer;
+                    waKerbObj.AddComponent<MeshFilter>().sharedMesh = waKerb;
+                    waKerbObj.AddComponent<MeshRenderer>().sharedMaterial = RequireMaterial(
+                        kerbMaterial != null ? kerbMaterial : ResolveSidewalkMaterial(), "kerb");
+                }
+            }
+
+            _grassExclusions.Add(new GrassPolygon((Vector2[])verts2D.Clone()));
+            _walkablePolys.Add(new WalkablePolygon((Vector2[])verts2D.Clone(), WalkableKind.WalkingArea));
+            _pedestrianFootprints.Add((Vector2[])verts2D.Clone());
+            built++;
+        }
+
+        Debug.Log($"Built {built} walking area(s)" +
+                  (skipped > 0 ? $", skipped {skipped}." : "."));
+    }
+
+    /// <summary>
+    /// Removes duplicate points, including a first vertex repeated at the end.
+    ///
+    /// This is what broke the walking areas either side of the J8 zebra crossing.
+    /// SUMO closes *some* walking-area outlines explicitly - measured: 2 of the
+    /// 20 in Scenario1, and both of them are J8's - while junction outlines are
+    /// never closed, which is why junctions triangulated fine and these did not.
+    ///
+    /// The repeated vertex leaves a zero-length edge that the ear clipper can
+    /// never snip. It does not fail outright: simulating the triangulator on
+    /// J8's rings gives **3 indices instead of 6**, so the 4x2 m landing area
+    /// rendered as a single triangle and half of it was simply missing - which
+    /// reads on screen as a gap in the pavement at the kerb. After deduping,
+    /// both rings produce the full 6 indices.
+    /// </summary>
+    private static List<Vector2> DedupeRing(List<Vector2> ring)
+    {
+        var outRing = new List<Vector2>(ring.Count);
+        const float epsSqr = 1e-6f;
+
+        foreach (Vector2 p in ring)
+        {
+            if (outRing.Count == 0 || (outRing[outRing.Count - 1] - p).sqrMagnitude > epsSqr)
+                outRing.Add(p);
+        }
+
+        // Closing point repeated at the end.
+        while (outRing.Count > 1 && (outRing[0] - outRing[outRing.Count - 1]).sqrMagnitude <= epsSqr)
+            outRing.RemoveAt(outRing.Count - 1);
+
+        return outRing;
+    }
+
+    /// <summary>
+    /// Runs a pavement band around the exposed rim of each junction, so the
+    /// kerb line follows the asphalt outline instead of cutting across it.
+    ///
+    /// SUMO inflates a junction shape to cover the area swept by turning
+    /// vehicles. At acute corners that produces a blob far larger than the roads
+    /// meeting there - measured on Scenario1, the junction outline overshoots the
+    /// nearest pedestrian surface by up to 7.75 m at J0, and by about 4 m at J3
+    /// and J4, while the other five junctions are already flush. Rendering that
+    /// whole blob as asphalt leaves bare road outside the sidewalk, with the
+    /// pavement curving on a visibly different radius from the tarmac.
+    ///
+    /// The band is generated by walking the junction outline inwards by half the
+    /// sidewalk width, so the ribbon's outer edge lands exactly on the outline -
+    /// same curve, same radius. Stretches of outline that are a road mouth are
+    /// skipped, otherwise the band would lay a kerb across the carriageway.
+    /// </summary>
+    private void BuildJunctionPavements()
+    {
+        if (!buildJunctionPavement || junctionRecords == null) return;
+
+        int built = 0;
+        foreach (RoadJunctionData j in junctionRecords.Values)
+        {
+            if (j.shapePoints.Count < 3) continue;
+
+            int n = j.shapePoints.Count;
+            var outline = new Vector2[n];
+            for (int i = 0; i < n; i++)
+            {
+                double[] xy = j.shapePoints[i];
+                outline[i] = new Vector2((float)(xy[0] - originX), (float)(xy[1] - originY));
+            }
+
+            // Which vertices sit on a road mouth: those are where traffic enters,
+            // and a raised band there would be a kerb across the road.
+            // Exposed rim only. Measured on Scenario1, just J0, J3 and J4
+            // overshoot their pedestrian surfaces (by 7.75 m, 4.07 m and 4.00 m);
+            // the other five junctions are already flush, and paving those would
+            // lay a kerb across the carriageway. A vertex is skipped when it is
+            // a road mouth or when a sidewalk or walking area already covers it.
+            var isMouth = new bool[n];
+            for (int i = 0; i < n; i++)
+            {
+                // The paved test uses the full band width, not the mouth
+                // clearance: the band reaches sidewalkWidthFallback inwards from
+                // the outline, so anything nearer than that would be overlapped
+                // and the two coplanar surfaces would z-fight.
+                isMouth[i] = IsNearCarriageway(outline[i], junctionPavementMouthClearance)
+                             || IsAlreadyPaved(outline[i], sidewalkWidthFallback);
+            }
+
+            // Nothing exposed, or nothing but mouth - either way there is no rim
+            // to pave.
+            bool anyFree = false, anyMouth = false;
+            for (int i = 0; i < n; i++) { anyFree |= !isMouth[i]; anyMouth |= isMouth[i]; }
+            if (!anyFree) continue;
+
+            Vector2 centre = Vector2.zero;
+            for (int i = 0; i < n; i++) centre += outline[i];
+            centre /= n;
+
+            float halfW = sidewalkWidthFallback * 0.5f;
+
+            // Contiguous runs of exposed outline. When the whole ring is exposed
+            // the run wraps, so start from a mouth vertex where one exists.
+            int start = 0;
+            if (anyMouth) { while (start < n && !isMouth[start]) start++; }
+
+            var run = new List<Vector3>();
+            for (int k = 0; k <= n; k++)
+            {
+                int i = (start + k) % n;
+                bool free = !isMouth[i] && (anyMouth || k < n);
+
+                if (free)
+                {
+                    // Step inwards so the ribbon's OUTER edge lands on the
+                    // outline itself - that is what makes the radii agree.
+                    Vector2 inward = (centre - outline[i]).normalized;
+                    Vector2 p = outline[i] + inward * halfW;
+                    run.Add(new Vector3(p.x, 0f, p.y));
+                }
+
+                if ((!free || k == n) && run.Count >= 2)
+                {
+                    Mesh band = CreateSidewalkRibbon(run.ToArray(), sidewalkWidthFallback,
+                                                     out Vector2[] bandFootprint);
+                    if (band != null)
+                    {
+                        BuildSidewalk(band, bandFootprint, $"{j.junctionId}_rim{built}");
+                        _grassExclusions.Add(new GrassPolygon(bandFootprint));
+                        built++;
+                    }
+                    run.Clear();
+                }
+                else if (!free)
+                {
+                    run.Clear();
+                }
+            }
+        }
+
+        if (built > 0) Debug.Log($"Built {built} junction pavement band(s).");
+    }
+
+    /// <summary>
+    /// True if a sidewalk or walking area already covers this point, so the rim
+    /// paving does not double up on pavement that exists.
+    /// </summary>
+    private bool IsAlreadyPaved(Vector2 p, float clearance)
+    {
+        float c2 = clearance * clearance;
+        for (int i = 0; i < _pedestrianFootprints.Count; i++)
+        {
+            Vector2[] poly = _pedestrianFootprints[i];
+            if (poly == null || poly.Length < 3) continue;
+            if (PointInPolygon(p, poly)) return true;
+            for (int a = 0; a < poly.Length; a++)
+            {
+                if (SqrDistanceToSegment(p, poly[a], poly[(a + 1) % poly.Length]) <= c2) return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// True if the point lies on, or within <paramref name="clearance"/> of, a
+    /// carriageway lane. Used to leave road mouths unpaved.
+    /// </summary>
+    private bool IsNearCarriageway(Vector2 p, float clearance)
+    {
+        float c2 = clearance * clearance;
+        for (int i = 0; i < _carriagewayFootprints.Count; i++)
+        {
+            Vector2[] poly = _carriagewayFootprints[i];
+            if (poly == null || poly.Length < 3) continue;
+            if (PointInPolygon(p, poly)) return true;
+
+            for (int a = 0; a < poly.Length; a++)
+            {
+                Vector2 s0 = poly[a];
+                Vector2 s1 = poly[(a + 1) % poly.Length];
+                if (SqrDistanceToSegment(p, s0, s1) <= c2) return true;
+            }
+        }
+        return false;
+    }
+
+    private static float SqrDistanceToSegment(Vector2 p, Vector2 a, Vector2 b)
+    {
+        Vector2 ab = b - a;
+        float len2 = ab.sqrMagnitude;
+        if (len2 < 1e-9f) return (p - a).sqrMagnitude;
+        float t = Mathf.Clamp01(Vector2.Dot(p - a, ab) / len2);
+        return (p - (a + ab * t)).sqrMagnitude;
+    }
+
+    /// <summary>
+    /// Publishes every walkable footprint onto the generated root, where the
+    /// Social Force Model reads them as wall boundaries (Phase 3).
+    /// </summary>
+    private void PublishWalkableAreas()
+    {
+        var registry = roadNetworkRoot.GetComponent<WalkableAreas>()
+                       ?? roadNetworkRoot.AddComponent<WalkableAreas>();
+        registry.polygons = new List<WalkablePolygon>(_walkablePolys);
+        registry.surfaceHeight = sidewalkHeight;
+        Debug.Log($"WalkableAreas: {registry.Summary()}.");
+    }
+
+    /// <summary>
+    /// Guards against handing a MeshRenderer a null or shaderless material,
+    /// which Unity draws as flat magenta with nothing in the console to say why.
+    /// </summary>
+    private Material RequireMaterial(Material candidate, string usage)
+    {
+        if (candidate != null && candidate.shader != null) return candidate;
+
+        Debug.LogError(
+            $"No usable {usage} material (material null: {candidate == null}). " +
+            "Run 'Sumo2Unity > 5. Create Sidewalk Material', or assign one on the " +
+            "Road Network Builder, then rebuild. Falling back to the road material.");
+
+        return roadSurfaceMaterial != null ? roadSurfaceMaterial : GetFallbackMaterial();
+    }
+
+    private Material ResolveSidewalkMaterial()
+    {
+        if (sidewalkMaterial != null) return sidewalkMaterial;
+
+        const string path = "Assets/_Project/Materials/Mat_Sidewalk.mat";
+        var found = AssetDatabase.LoadAssetAtPath<Material>(path);
+        if (found != null)
+        {
+            sidewalkMaterial = found;
+            return found;
+        }
+
+        // Falling back to the road material keeps the build working; it just
+        // looks like the pre-Phase-4 flat asphalt.
+        return roadSurfaceMaterial ?? GetFallbackMaterial();
     }
 
     /// <summary>
@@ -693,7 +1414,23 @@ public class RoadNetworkBuilder : MonoBehaviour
         return l.Contains("wood") || l.Contains("terrain") || l.Contains("roadside") || l.Contains("residential");
     }
 
-    private Material GetFallbackMaterial() => new Material(Shader.Find("Standard"));
+    /// <summary>
+    /// Last-resort material. "Standard" does not exist in a URP project -
+    /// Shader.Find returns null and `new Material(null)` renders magenta - so
+    /// the URP shader is tried first.
+    /// </summary>
+    private Material GetFallbackMaterial()
+    {
+        Shader shader = Shader.Find("Universal Render Pipeline/Lit")
+                        ?? Shader.Find("Standard")
+                        ?? Shader.Find("Sprites/Default");
+        if (shader == null)
+        {
+            Debug.LogError("No usable fallback shader found; meshes will render magenta.");
+            return null;
+        }
+        return new Material(shader);
+    }
 
     private Mesh CreateLaneMesh(Vector3[] lanePoints, float roadWidth, float uvScaleU, float uvScaleV)
     {

@@ -137,6 +137,11 @@ public class SimulationController : MonoBehaviour
 
     private readonly Dictionary<string, GameObject> personObjects = new Dictionary<string, GameObject>();
 
+    // Phase 4 raised sidewalks above the carriageway, but SUMO reports every
+    // pedestrian at z = 0. Without lifting them onto the kerb they walk sunk
+    // into the pavement. Resolved once at Start from the generated road network.
+    private WalkableAreas _walkableAreas;
+
     private float _lastTlTime = 0f;
     private float tlUpdateInterval = 1f;
     private Dictionary<string, string> _lastTlState = new();
@@ -175,6 +180,8 @@ public class SimulationController : MonoBehaviour
         {
             _ExchangeData = gameObject.AddComponent<ExchangeData>();
         }
+
+        _walkableAreas = FindFirstObjectByType<WalkableAreas>();
 
         SumoRequesterStart();
 
@@ -525,7 +532,7 @@ public class SimulationController : MonoBehaviour
             // SUMO (x, y, z) -> Unity (x, z_up, y), matching the vehicles branch.
             Vector3 pos = new Vector3(
                 (float)person.position[0],
-                (float)person.position[2],
+                (float)person.position[2] + SurfaceHeightFor(person.state),
                 (float)person.position[1]);
             Quaternion rot = Quaternion.Euler(0f, (float)person.angle + pedestrianHeadingOffset, 0f);
 
@@ -539,6 +546,19 @@ public class SimulationController : MonoBehaviour
             var pc = go.GetComponent<PedestrianController>();
             if (pc != null) pc.UpdateTarget(pos, rot, person.speed);
         }
+    }
+
+    /// <summary>
+    /// How far to lift a pedestrian so their feet meet the surface they are on.
+    /// Sidewalks and walking areas are raised onto a kerb by the road builder;
+    /// crossings stay at carriageway level, which is what a real zebra does.
+    /// </summary>
+    private float SurfaceHeightFor(string state)
+    {
+        if (_walkableAreas == null) return 0f;
+        return (state == "sidewalk" || state == "walkingarea")
+            ? _walkableAreas.surfaceHeight
+            : 0f;
     }
 
     private GameObject SpawnPedestrian(Person person, Vector3 pos, Quaternion rot)

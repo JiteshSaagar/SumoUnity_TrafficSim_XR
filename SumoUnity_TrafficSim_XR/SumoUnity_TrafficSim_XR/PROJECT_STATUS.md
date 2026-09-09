@@ -235,8 +235,49 @@ python RequiredFiles/Sumo2UnityTool_combined.py --config Scenario1/Sumo2Unity.su
 | **XR Pedestrian Ego** | ✅ Complete | Phase 2: injected as a real SUMO person (`ped_xr`); vehicles yield to it at the zebra. See §8.10. |
 | **Social Force Model** | ❌ Not implemented | Planned for Unity-side pedestrian agents. See §8.6. |
 | **Pedestrian Network (SUMO)** | ✅ Complete | Phase 0: sidewalks on all 19 edges, 14 crossings, 20 walking areas, 85 peds / 300 s. See §8.8. |
-| **Sidewalks / Walking Areas (3D)** | ⚠️ Partial | SUMO side done (§8.8); Unity still builds sidewalks as flat asphalt with no kerb and no walking areas. Phase 4. |
+| **Sidewalks / Walking Areas (3D)** | ✅ Complete | Phase 4: 19 raised sidewalks with kerbs, 20 walking areas, 53 walkable polygons published for the social force model. See §8.12. |
 | **Experiment Analytics** | ✅ Complete | Unified reporting to `Results/` compatible with `rtf2chart` and `fps2chart`. |
+
+### 5.1 Pedestrian layer roadmap
+
+Half the pedestrian work is done. Phases 0–2 are implemented, tested and
+merged; 3–5 are specified but not started. Full specs live in §8.6.
+
+| Phase | Scope | Status | Detail |
+|---|---|---|---|
+| **0** | SUMO network: sidewalks, crossings, walking areas, pedestrian demand | ✅ **Done** | §8.8 |
+| **1** | SUMO → Unity `persons` channel; pedestrians visible and animated | ✅ **Done** | §8.9 |
+| **2** | XR tester injected as a real SUMO person; vehicles yield to it | ✅ **Done** | §8.10 |
+| — | Desktop keyboard/mouse pedestrian, for testing without a headset | ✅ **Done** | §8.11 |
+| **3** | **Social Force Model** — ~100 Unity-simulated NPC pedestrians with local avoidance and gap-acceptance crossing | ⬜ **Not started** | §8.6 |
+| **4** | **Walkable surfaces in 3D** — kerbs, walking-area meshes, wall boundaries for the social force term | ✅ **Core done** (NavMesh deferred) | §8.12 |
+| **5** | **Analytics & validation** — pedestrian logging, time-to-collision, yield rate, gap acceptance, gaze correlation | ⬜ **Not started** | §8.6 |
+
+**What is left, in short:**
+
+1. **Phase 3 — Social Force Model.** The actual research contribution. Desire +
+   repulsion forces per Helbing & Molnár (§8.5), wall forces to keep agents on
+   the pavement, a spawner, and crossing discipline. Because Scenario1 is
+   unsignalised (§8.8), crossing behaviour must be **gap acceptance**, not
+   traffic-light state — plus a `jaywalkProbability` for deliberate risk
+   behaviour, which the paper lists as future work and we can actually deliver.
+   Needs the Unity → SUMO message widened to carry many agents rather than just
+   the ego.
+2. **Phase 4 — Walkable surfaces.** Required *by* Phase 3, because the wall
+   forces need real boundary polygons. Also fixes the cosmetic gaps from the
+   Phase 0 rebuild: sidewalks currently render as flat asphalt with no kerb, and
+   walking areas are not built at all.
+3. **Phase 5 — Analytics.** Turns the simulator into an experiment: the safety
+   metrics the reference paper never computed.
+
+**Ordering note.** Phases 3 and 4 are mutually entangled: Phase 3's wall forces
+need Phase 4's boundary polygons, while Phase 4's value is mostly realised by
+Phase 3. Doing a slice of Phase 4 first (lane `allow`/`disallow` parsing and
+boundary extraction) unblocks Phase 3 cleanly.
+
+**Known blocker for Phase 3.** A Mixamo character is ~30–60k triangles with four
+materials. One hundred of them will not hold 90 fps in VR. A low-poly crowd
+model or an LOD scheme is a prerequisite, not a polish item — see §8.9.
 
 ---
 
@@ -771,9 +812,9 @@ target hardware is comparable, so 100 concurrent agents is a realistic goal.
 
 ### 8.6 Implementation plan
 
-Six phases, ordered so each one is independently testable. Phases 1-3 deliver
-the user-visible goal (NPC pedestrians walking and crossing, plus a real XR
-pedestrian); 4-6 are quality and rigour.
+Six phases, ordered so each one is independently testable. Phases 0-2 are
+**done and merged** (§§8.8-8.10); Phases 3-5 remain. §5.1 has the roadmap at a
+glance; the specs below are the detail.
 
 ---
 
@@ -860,7 +901,7 @@ SUMO vehicles brake — which §8.3 confirms works.
 
 ---
 
-#### Phase 3 — Social Force Model for Unity-side NPC pedestrians
+#### Phase 3 — Social Force Model for Unity-side NPC pedestrians ⬜ **NOT STARTED**
 
 Now offload pedestrian simulation from SUMO to Unity, per the paper.
 
@@ -895,7 +936,7 @@ queue at the crossing, and SUMO vehicles yield to them.
 
 ---
 
-#### Phase 4 — Walkable surfaces in 3D
+#### Phase 4 — Walkable surfaces in 3D ✅ **CORE DONE** — see §8.12
 
 Required by Phase 3's wall forces and by simple visual credibility.
 
@@ -916,7 +957,7 @@ Required by Phase 3's wall forces and by simple visual credibility.
 
 ---
 
-#### Phase 5 — Analytics & validation
+#### Phase 5 — Analytics & validation ⬜ **NOT STARTED**
 
 - Extend `analytics/metrics_logger.py` and the Unity `vehicle_data_report.txt`
   writer to log pedestrians: id, position, speed, `road_id`, and crossing
@@ -1406,3 +1447,336 @@ Set `SimulationController.Ego Vehicle` back to the `XR Pedestrian` rig and
 disable the desktop rig. Everything else — `Is Pedestrian`, `Ego Vehicle Id`,
 the backend checkbox — stays the same, because the desktop rig is only a
 different way of moving the same transform.
+
+---
+
+### 8.12 Phase 4 — Walkable surfaces in 3D (core done, NavMesh deferred)
+
+Phase 4 was started ahead of Phase 3 deliberately: the Social Force Model needs
+**wall boundaries** to stop agents drifting off the pavement, and the only thing
+that knows where the pavement is, is the road builder. This delivers those
+boundaries, plus the visual gaps left over from the Phase 0 rebuild.
+
+#### What lane permissions unlocked
+
+`RoadLaneData` now carries SUMO's `allow` / `disallow` vClass lists, parsed from
+`LaneType.Allow` / `LaneType.Disallow` (both were already in the generated
+schema, just never read). The sidewalk test is:
+
+```csharp
+public bool IsSidewalk =>
+    !string.IsNullOrEmpty(allow) &&
+    allow.IndexOf("pedestrian", StringComparison.OrdinalIgnoreCase) >= 0;
+```
+
+**Lane index 0 is not a valid test** — an edge with no sidewalk also has a lane
+0. The allow list is the only reliable signal.
+
+#### Changes
+
+| File | Change |
+|---|---|
+| `RoadNetworkData.cs` | `allow` / `disallow` on `RoadLaneData`, plus `IsSidewalk`. New `AddLaneData` overload carrying permissions; the old signature delegates to it, so nothing else had to change. |
+| `RoadNetworkBuilder.cs` | Sidewalk lanes branch to `BuildSidewalk()`; `BuildKerbMesh()`, `BuildWalkingAreas()`, `PublishWalkableAreas()`, `ResolveSidewalkMaterial()`. Walking areas parsed via `XmlDocument`. New inspector fields. |
+| `WalkableAreas.cs` | **New.** The registry of walkable footprints, with `Contains()` and `TryGetNearestBoundary()`. |
+| `SimulationController.cs` | Lifts pedestrians onto the kerb via `SurfaceHeightFor(state)`. |
+| `Editor/SidewalkMaterialSetup.cs` | **New.** Menu **Sumo2Unity → 5. Create Sidewalk Material**. |
+
+#### Why walking areas needed a second parser
+
+The typed `XmlSerializer` pass skips them:
+
+```csharp
+foreach (EdgeType et in netFile.Edge) { if (string.IsNullOrEmpty(et.From)) continue; ... }
+```
+
+Walking areas and crossings are **internal edges with no `from` attribute**, so
+they never reach the lane loop. That is why junction corners had no pedestrian
+surface at all. They are now read with `XmlDocument` on
+`//edge[@function='walkingarea']`, exactly as crossings already were.
+
+A walking area's lane `shape` is a **closed outline, not a centreline**, so it is
+triangulated directly rather than extruded through `CreateLaneMesh`.
+
+#### Heights, and why crossings stay low
+
+| Surface | Height | Reason |
+|---|---|---|
+| Carriageway, junctions | 0.00 m | unchanged |
+| Crossings | 0.015 m | a zebra is painted *on* the road; keeping it low is what makes stepping off the kerb read correctly |
+| Sidewalks, walking areas | `sidewalkHeight`, default **0.12 m** | kerb height |
+
+Walking areas deliberately match sidewalk height — otherwise pedestrians would
+step down and back up at every junction corner.
+
+The slab is raised by moving the **GameObject**, not the vertices, so the mesh
+stays identical to a carriageway lane and the footprint used for grass exclusion
+and social-force walls needs no separate transform.
+
+#### Two consequences that had to be handled
+
+**Pedestrians would sink into the pavement.** SUMO reports every person at
+z = 0, so a raised sidewalk would bury them to the ankles.
+`SimulationController.SurfaceHeightFor(state)` lifts them using the `state`
+field Phase 1 already sends — `sidewalk` and `walkingarea` get the kerb height,
+`crossing` gets none. O(1), no raycast, no per-agent cost at 100 agents.
+
+**The desktop pedestrian needed something to stand on.** Sidewalks and walking
+areas now get a `MeshCollider`, so `DesktopPedestrianController`'s ground
+raycast finds them and the tester steps up and down kerbs properly. Before this,
+nothing in the generated network had a collider, which is exactly why that
+controller was written to keep its last height when the ray misses.
+
+#### Verified
+
+Predicted build output for `Scenario1`, computed from the network file:
+
+| Element | Count |
+|---|---|
+| Sidewalk lanes → raised slab + kerb | **19** |
+| Carriageway lanes → unchanged | 19 |
+| Walking areas → triangulated | **20 of 20** |
+| Crossings → registered walkable | 14 |
+| **`WalkableAreas` polygons for Phase 3** | **53** |
+
+C# compile against Unity 6000.0.53f1 assemblies: **0 errors**.
+
+#### ⚠️ Manual steps
+
+1. **Sumo2Unity → 5. Create Sidewalk Material.** Generates
+   `Mat_Sidewalk.mat` from the unused `SidewalkMaterial*` textures and assigns it
+   to the builder. Without it, sidewalks fall back to asphalt and simply look
+   like before.
+2. **Sumo2Unity → 1. Create Road Network** to rebuild, then **save the scene**.
+
+Expect the console to report the walking-area count and a `WalkableAreas:` line
+summarising the registry.
+
+`sidewalkHeight` is adjustable on the manager; set it to 0 to render everything
+flush again, which is the pre-Phase-4 look.
+
+#### Fixes after the first rebuild
+
+Two defects showed up the first time the network was rebuilt with Phase 4.
+
+**1. Magenta kerbs.** The kerb was the only place a material was resolved with
+`??`:
+
+```csharp
+kerbMaterial ?? ResolveSidewalkMaterial()      // wrong
+```
+
+`??` uses a plain reference check and so **bypasses Unity's overloaded `==`
+operator**. An unassigned or destroyed `UnityEngine.Object` can be non-null to
+C# while being null to Unity, so the dead reference wins and the renderer draws
+magenta. Now `kerbMaterial != null ? kerbMaterial : ...`, which goes through
+Unity's operator. Never use `??` or `?.` on a `UnityEngine.Object`.
+
+Two related hardenings: `GetFallbackMaterial()` was
+`new Material(Shader.Find("Standard"))`, and **"Standard" does not exist in
+URP** - `Shader.Find` returns null and a material with a null shader renders
+magenta, so it now asks for `Universal Render Pipeline/Lit` first. And
+`RequireMaterial()` now logs an error naming the surface instead of silently
+drawing magenta.
+
+**2. Half-missing pavement at the J8 crossing.** Caused by a **duplicated
+closing vertex**: SUMO repeats the first point at the end of *some*
+walking-area outlines - measured, 2 of the 20 in Scenario1, and both are J8's -
+while junction outlines are never closed, which is exactly why junctions
+triangulated fine and these did not.
+
+The repeated vertex leaves a zero-length edge the ear clipper can never snip.
+It does not fail outright. Simulating `MeshTriangulator` on J8's rings:
+
+| Ring | Before | After `DedupeRing` |
+|---|---|---|
+| `:J8_w0` | 3 indices (1 triangle) | **6 indices (2 triangles)** |
+| `:J8_w1` | 3 indices (1 triangle) | **6 indices (2 triangles)** |
+
+So the 4 x 2 m landing area rendered as a single triangle and half of it was
+missing - which on screen reads as a gap in the pavement right where you step
+off the kerb onto the zebra.
+
+A winding guard (`normals[0].y < 0` then flip, matching
+`BuildPolygonGameObject`) was added at the same time. Measured, the walking
+areas and junctions share a winding, so **this was not the cause** - it is a
+cheap guard against a downward-facing polygon, nothing more.
+
+#### Second round of fixes: kerbs, z-fighting, texture density
+
+Three more defects, all measured against the network rather than guessed from
+the screenshots.
+
+**1. Walking areas had no kerb.** They are raised to kerb height like the
+sidewalks they join, but only sidewalks got a skirt, so a walking area read as a
+floating slab - most obvious at the crossing, where you look straight at the
+open edge. `BuildWalkingAreas` now builds the same skirt.
+
+**2. "Sharp turns look weird" was z-fighting, not bad geometry.** Two things
+were ruled out first, by measurement:
+
+| Hypothesis | Measured | Verdict |
+|---|---|---|
+| Sidewalks not flush with the road | deviation **0.00 m** on all 19 edges | not the cause |
+| Corner mitring wrong | all 19 sidewalk lanes are **straight, 2-point** | not the cause |
+| Walking areas triangulating badly | **20 of 20** complete after dedupe | not the cause |
+| Sidewalk/walking-area overlap | **23 pairs overlap**, both at exactly y = 0.12 | **this is it** |
+
+SUMO cuts a sidewalk back to the junction while the walking area reaches out to
+meet it, so at junction corners they genuinely overlap. Two coplanar surfaces at
+identical height give the depth test nothing to separate them, and the result is
+the shimmering patchwork seen around sharp junctions. Walking areas now sit
+`walkingAreaDepthBias` (4 mm) higher - the same trick the crossings already use
+to sit above the carriageway.
+
+**3. Stretched and compressed pavement texture.** Two different causes:
+
+- Sidewalks inherited the *road* UV convention from `CreateLaneMesh`:
+  `u = width / uvScaleU` with `uvScaleU = 1`, `v = distance / uvScaleV` with
+  `uvScaleV = 5`. That is one tile per metre across and one per five metres
+  along - **five-to-one anisotropic**, which is exactly the smeared look.
+- Walking areas used bounds-normalised UVs, stretching one whole tile across the
+  polygon whatever its size, so a 4 x 2 m landing area looked nothing like the
+  pavement beside it.
+
+Both now use **world-space UVs** at `sidewalkMetresPerTile` (default 2 m),
+matching the convention §7.1 already uses for the ground. Kerbs use the same
+density, so slab, skirt and walking area read as one continuous pavement.
+`SidewalkMaterialSetup` now writes tiling **1,1** - it previously set 1,4, which
+would have multiplied on top of the world-space UVs.
+
+`CreateSidewalkRibbon` was added rather than changing `CreateLaneMesh`, because
+`LaneMarkingController` reads that function's exact four-verts-per-segment
+layout through `Extract*SideVertices`. The new ribbon shares vertices between
+segments and mitres corners; on Scenario1 every sidewalk is straight so the
+mitring is currently a no-op, but it is what makes the shared-vertex, world-UV
+strip possible and it will matter on a curved network.
+
+#### Junction rim paving: making the kerb follow the tarmac
+
+The remaining complaint - pavement curving on a different radius from the road
+at junctions - was neither the sidewalks nor the mitring. Measured, the sidewalk
+sits **exactly flush** with the carriageway on all 19 edges (0.00 m), and every
+sidewalk lane in Scenario1 is a straight two-point segment.
+
+The cause is that **SUMO inflates a junction shape to cover the area swept by
+turning vehicles**. At acute corners that produces a blob much larger than the
+roads meeting there. Distance from each junction outline vertex to the nearest
+pedestrian surface:
+
+| Junction | Max overshoot |
+|---|---|
+| **J0** | **7.75 m** |
+| **J3** | **4.07 m** |
+| **J4** | **4.00 m** |
+| J1, J2, J5, J6, J8 | 0.00 m (flush) |
+
+Rendering that whole blob as asphalt leaves bare road outside the sidewalk, with
+the pavement visibly on a tighter curve than the tarmac.
+
+`BuildJunctionPavements()` now runs a pavement band around the **exposed** rim.
+Each outline vertex is stepped inwards by half the band width, so the ribbon's
+outer edge lands exactly on the junction outline - same curve, same radius.
+
+Two exclusions keep it honest, and both were needed: a first attempt using only
+a road-mouth test laid a band **across the middle of a carriageway** and threw a
+thin spike at another junction.
+
+- **Road mouths** are skipped, or the band would be a kerb across the traffic
+  lanes.
+- **Already-paved rim** is skipped, tested at the full band width rather than
+  the mouth clearance - anything nearer would be overlapped, and two coplanar
+  pavement surfaces z-fight.
+
+With both in place the algorithm selects exactly the three junctions the
+measurement identified - J0, J3, J4, five exposed vertices each - and produces
+three bands, none crossing a road.
+
+**What this does not do:** at J0 the overshoot is 7.75 m and the band is 2 m, so
+asphalt still shows between the new rim pavement and the walking areas inside
+the junction. That interior really is road, and a 7.75 m wide "sidewalk" would
+be worse. If a tighter junction is wanted, the fix belongs upstream - regenerate
+with a smaller `--junctions.corner-detail`, or hand-edit the junction shape in
+netedit - rather than in the renderer.
+
+Set `buildJunctionPavement = false` on the manager to turn the bands off.
+
+#### Still outstanding in Phase 4
+
+- **NavMesh baking is not done.** `com.unity.ai.navigation` 2.0.8 is installed,
+  so `NavMeshSurface` is available, but baking is deferred until Phase 3 exists
+  and it is clear whether global pathfinding is even needed — the social force
+  model may run on SUMO-derived waypoints alone, in which case a NavMesh is cost
+  without benefit.
+- Sidewalks are extruded from the lane ribbon, so at junction corners a kerb can
+  overlap a walking area slightly. Cosmetic, only visible from directly above.
+
+---
+
+## 9. Repository State & Branching
+
+**Baseline as of 2026-09-09:** `main`, `new-testing`, `origin/main` and
+`origin/new-testing` are all at commit `57222b5` — fully synced, working tree
+clean. Everything in §§8.8–8.11 (Phases 0–2 plus the desktop pedestrian) is
+merged into `main`.
+
+### How the sync was done
+
+`new-testing` was 7 commits ahead of `main` with `main` fully contained in it,
+so this was a **pure fast-forward** — no merge commit, no conflicts, no history
+rewrite. The merge used:
+
+```
+git fetch . new-testing:main      # fast-forwards the ref WITHOUT checking it out
+git push origin main
+```
+
+`git fetch` into a local ref **refuses anything that is not a fast-forward**,
+which makes it a safer way to advance a branch than `git branch -f`. Updating
+the ref without checking it out also leaves the working tree untouched, which
+matters here — see below.
+
+### Two traps worth remembering
+
+**1. `Scenario1/Sumo2Unity.rou.xml` is CRLF on disk but LF in the committed
+blob.** Git therefore sees it as modified even when `git status` has just
+reported a clean tree, which blocks branch switches with
+*"Your local changes would be overwritten"*. The content is identical; only the
+line endings differ. Confirm with:
+
+```
+diff <(git show new-testing:./Scenario1/Sumo2Unity.rou.xml | tr -d '\r') \
+     <(tr -d '\r' < Scenario1/Sumo2Unity.rou.xml)
+```
+
+A `.gitattributes` with `* text=auto` and `*.xml text` would stop this
+recurring. Not yet added.
+
+**2. SUMO holds the route file open.** While `sumo-gui` is running with
+`Sumo2Unity.sumocfg` loaded, Windows refuses to unlink `Sumo2Unity.rou.xml`, so
+`git stash` and `git checkout` fail part-way — a stash entry gets created but
+the working tree is not reset. **Stop the simulation before any branch
+operation.**
+
+### ⚠️ Never let Unity save the scene while the branch is mid-switch
+
+If a checkout has temporarily removed the pedestrian scripts from disk, Unity
+will reload the domain against a project where those `MonoBehaviour`s do not
+exist. Saving the scene in that state **strips the missing script references**,
+silently destroying the `SimulationController` wiring (pedestrian prefab, ego
+vehicle, junction list). Recovering means reverting the scene file.
+
+If a branch switch catches Unity open: **force-kill Unity rather than closing it
+gracefully**, so it cannot prompt to save. Then reopen once the working tree is
+correct; it will reimport and rebuild the Library, which takes a few minutes.
+
+### Safety nets from the 2026-09-09 sync
+
+| Ref | Points at | Purpose |
+|---|---|---|
+| `backup/main-pre-sync` | `0bd39e4` | The pre-sync `main`, to roll back to |
+| `backup/new-testing-pre-sync` | `57222b5` | The pre-sync `new-testing` |
+| `stash@{0}` | — | CRLF `rou.xml` + a Unity-truncated `Results` file. **Redundant** — everything in it is committed. Safe to `git stash drop`. |
+
+To undo the sync entirely:
+`git push --force-with-lease origin backup/main-pre-sync:main`
